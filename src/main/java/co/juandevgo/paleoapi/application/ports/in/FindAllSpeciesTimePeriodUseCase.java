@@ -4,7 +4,7 @@ import co.juandevgo.paleoapi.application.dto.SpecieDTO;
 
 import java.util.List;
 
-public interface FindAllSpeciesGroupUseCase {
+public interface FindAllSpeciesTimePeriodUseCase {
 
-    List<SpecieDTO> findAllSpeciesGroup(String group);
+    List<SpecieDTO> findAllSpeciesTimePeriod(String timePeriod);
 }
