@@ -4,6 +4,8 @@ import co.juandevgo.paleoapi.application.dto.CreateSpecieResponseDTO;
 import co.juandevgo.paleoapi.application.dto.SpecieDTO;
 import co.juandevgo.paleoapi.application.ports.in.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -29,37 +31,37 @@ public class SpeciesController implements ISpeciesRestUI {
     private final FindAllSpeciesLocationUseCase findAllSpeciesLocationUseCase;
 
     @Override
-    public CreateSpecieResponseDTO createSpecie(SpecieDTO specie) {
-        return createSpecieUseCase.createSpecie(specie);
+    public ResponseEntity<CreateSpecieResponseDTO> createSpecie(SpecieDTO specie) {
+        return new ResponseEntity<>(createSpecieUseCase.createSpecie(specie), HttpStatus.OK);
     }
 
     @Override
-    public List<SpecieDTO> getAllSpecies() {
-        return getAllSpeciesUseCase.getAllSpecies();
+    public ResponseEntity<List<SpecieDTO>> getAllSpecies() {
+        return new ResponseEntity<>(getAllSpeciesUseCase.getAllSpecies(), HttpStatus.OK);
     }
 
     @Override
-    public List<SpecieDTO> getSpecieByName(String name) {
-        return findAllSpeciesNameUseCase.findAllSpeciesName(name);
+    public ResponseEntity<List<SpecieDTO>> getSpecieByName(String name) {
+        return new ResponseEntity<>(findAllSpeciesNameUseCase.findAllSpeciesName(name), HttpStatus.OK);
     }
 
     @Override
-    public List<SpecieDTO> getSpecieByGroup(String group) {
-        return findAllSpeciesGroupUseCase.findAllSpeciesGroup(group);
+    public ResponseEntity<List<SpecieDTO>>  getSpecieByGroup(String group) {
+        return new ResponseEntity<>(findAllSpeciesGroupUseCase.findAllSpeciesGroup(group), HttpStatus.OK);
     }
 
     @Override
-    public List<SpecieDTO> getSpecieByTimePeriod(String timePeriod) {
-        return findAllSpeciesTimePeriodUseCase.findAllSpeciesTimePeriod(timePeriod);
+    public ResponseEntity<List<SpecieDTO>>  getSpecieByTimePeriod(String timePeriod) {
+        return new ResponseEntity<>(findAllSpeciesTimePeriodUseCase.findAllSpeciesTimePeriod(timePeriod), HttpStatus.OK);
     }
 
     @Override
-    public List<SpecieDTO> getSpecieByClassification(String classification) {
-        return findAllSpeciesClassificationUseCase.findAllSpeciesClassification(classification);
+    public ResponseEntity<List<SpecieDTO>>  getSpecieByClassification(String classification) {
+        return new ResponseEntity<>(findAllSpeciesClassificationUseCase.findAllSpeciesClassification(classification), HttpStatus.OK);
     }
 
     @Override
-    public List<SpecieDTO> getSpecieByLocation(String location) {
-        return findAllSpeciesLocationUseCase.findAllSpeciesLocation(location);
+    public ResponseEntity<List<SpecieDTO>>  getSpecieByLocation(String location) {
+        return new ResponseEntity<>(findAllSpeciesLocationUseCase.findAllSpeciesLocation(location), HttpStatus.OK);
     }
 }
