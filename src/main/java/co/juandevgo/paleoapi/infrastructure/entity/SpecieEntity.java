@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.util.List;
+import java.util.UUID;
 
 @Entity
 @Table(name = "species")
@@ -13,13 +14,13 @@ public class SpecieEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    private Long id;
+    private UUID id;
 
     @NotNull
     @Column(unique = true)
     private String name;
 
-    @Column
+    @Column(name = "species_group")
     @NotNull
     private String group;
 

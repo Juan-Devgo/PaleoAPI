@@ -12,21 +12,21 @@ import java.util.List;
 @RestController
 @RequestMapping(value = "/api")
 @RequiredArgsConstructor
-public class SpecieController implements ISpecieRestUI {
+public class SpeciesController implements ISpeciesRestUI {
 
-    private CreateSpecieUseCase createSpecieUseCase;
+    private final CreateSpecieUseCase createSpecieUseCase;
 
-    private GetAllSpeciesUseCase getAllSpeciesUseCase;
+    private final GetAllSpeciesUseCase getAllSpeciesUseCase;
 
-    private FindAllSpeciesNameUseCase findAllSpeciesNameUseCase;
+    private final FindAllSpeciesNameUseCase findAllSpeciesNameUseCase;
 
-    private FindAllSpeciesGroupUseCase findAllSpeciesGroupUseCase;
+    private final FindAllSpeciesGroupUseCase findAllSpeciesGroupUseCase;
 
-    private FindAllSpeciesTimePeriodUseCase findAllSpeciesTimePeriodUseCase;
+    private final FindAllSpeciesTimePeriodUseCase findAllSpeciesTimePeriodUseCase;
 
-    private FindAllSpeciesClassificationUseCase findAllSpeciesClassificationUseCase;
+    private final FindAllSpeciesClassificationUseCase findAllSpeciesClassificationUseCase;
 
-    private FindAllSpeciesLocationUseCase findAllSpeciesLocationUseCase;
+    private final FindAllSpeciesLocationUseCase findAllSpeciesLocationUseCase;
 
     @Override
     public CreateSpecieResponseDTO createSpecie(SpecieDTO specie) {

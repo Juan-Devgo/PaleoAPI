@@ -1,20 +1,26 @@
 package co.juandevgo.paleoapi.application.service;
 
 import co.juandevgo.paleoapi.application.dto.SpecieDTO;
-import co.juandevgo.paleoapi.application.mapper.SpecieMapper;
+import co.juandevgo.paleoapi.application.mapper.SpeciesMapper;
 import co.juandevgo.paleoapi.application.ports.in.FindAllSpeciesClassificationUseCase;
-import co.juandevgo.paleoapi.infrastructure.persistence.repository.SpecieRepositoryJPA;
+import co.juandevgo.paleoapi.application.ports.out.ISpeciesRepository;
+import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+@Service
+@RequiredArgsConstructor
+@Transactional
 public class FindAllSpeciesClassificationService implements FindAllSpeciesClassificationUseCase {
 
-    private SpecieRepositoryJPA specieRepositoryJPA;
+    private final ISpeciesRepository speciesRepository;
 
-    private SpecieMapper specieMapper;
+    private final SpeciesMapper speciesMapper;
 
     @Override
     public List<SpecieDTO> findAllSpeciesClassification(String classification) {
-        return specieMapper.toDTOList(specieRepositoryJPA.findAllByClassification(classification));
+        return speciesMapper.toDTOFromDomainEntityLists(speciesRepository.findAllByClassification(classification));
     }
 }

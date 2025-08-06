@@ -2,17 +2,19 @@ package co.juandevgo.paleoapi.infrastructure.controller;
 
 import co.juandevgo.paleoapi.application.dto.CreateSpecieResponseDTO;
 import co.juandevgo.paleoapi.application.dto.SpecieDTO;
+import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.List;
 
-public interface ISpecieRestUI {
+public interface ISpeciesRestUI {
 
     @PostMapping(value = "species", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    CreateSpecieResponseDTO createSpecie(SpecieDTO specie);
+    CreateSpecieResponseDTO createSpecie(@Valid @RequestBody SpecieDTO specie);
 
     @GetMapping(value = "species", produces = MediaType.APPLICATION_JSON_VALUE)
     List<SpecieDTO> getAllSpecies();

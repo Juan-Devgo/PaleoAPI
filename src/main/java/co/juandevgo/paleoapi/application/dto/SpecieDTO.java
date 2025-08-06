@@ -46,11 +46,9 @@ public class SpecieDTO {
     private String timePeriod;
 
     @JsonProperty
-    @NotBlank
     private List<String> locations;
 
     @JsonProperty
-    @NotBlank
     private List<String> classification;
 
     @JsonProperty
