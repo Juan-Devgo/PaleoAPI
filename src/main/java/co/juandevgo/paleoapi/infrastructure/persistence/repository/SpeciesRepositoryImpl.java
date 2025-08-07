@@ -28,26 +28,26 @@ public class SpeciesRepositoryImpl implements ISpeciesRepository {
 
     @Override
     public List<Specie> findAllByName(String name) {
-        return speciesMapper.toDomainEntityFromEntityLists(speciesRepositoryJPA.findAllByName(name));
+        return speciesMapper.toDomainEntityFromEntityLists(speciesRepositoryJPA.findAllByName("%" + name + "%"));
     }
 
     @Override
     public List<Specie> findAllByGroup(String group) {
-        return speciesMapper.toDomainEntityFromEntityLists(speciesRepositoryJPA.findAllByGroup(group));
+        return speciesMapper.toDomainEntityFromEntityLists(speciesRepositoryJPA.findAllByGroup("%" + group + "%"));
     }
 
     @Override
     public List<Specie> findAllByTimePeriod(String timePeriod) {
-        return speciesMapper.toDomainEntityFromEntityLists(speciesRepositoryJPA.findAllByTimePeriod(timePeriod));
+        return speciesMapper.toDomainEntityFromEntityLists(speciesRepositoryJPA.findAllByTimePeriod("%" + timePeriod + "%"));
     }
 
     @Override
     public List<Specie> findAllByClassification(String classification) {
-        return speciesMapper.toDomainEntityFromEntityLists(speciesRepositoryJPA.findAllByClassification(classification));
+        return speciesMapper.toDomainEntityFromEntityLists(speciesRepositoryJPA.findAllByClassification("%" + classification + "%"));
     }
 
     @Override
     public List<Specie> findAllByLocation(String location) {
-        return speciesMapper.toDomainEntityFromEntityLists(speciesRepositoryJPA.findAllByLocation(location));
+        return speciesMapper.toDomainEntityFromEntityLists(speciesRepositoryJPA.findAllByLocation("%" + location + "%"));
     }
 }
