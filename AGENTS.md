@@ -47,13 +47,18 @@ Do not add dependencies outside this table without justifying them in the plan.
 ## 3. Commands
 
 ```bash
-docker compose up -d db          # start PostgreSQL
-sqlx migrate run                 # apply migrations
-cargo run                        # run the API
-cargo test                       # unit + integration tests
-cargo fmt --check                # formatting
-cargo clippy -- -D warnings      # lints
+cargo install sqlx-cli --no-default-features --features postgres   # once: sqlx-cli 0.9
+cp .env.example .env                       # once: then replace every "change-me" placeholder
+set -a; . ./.env; set +a                   # export the variables (the API does not read .env)
+docker compose up -d --wait db             # start PostgreSQL and wait until it is ready
+sqlx migrate run                           # apply migrations (the API never applies them)
+cargo run                                  # run the API
+DATABASE_URL="$TEST_DATABASE_URL" cargo test   # unit + integration tests
+cargo fmt --check                          # formatting
+cargo clippy --all-targets -- -D warnings  # lints
 ```
+
+Never run plain `cargo test` with the development `DATABASE_URL`: the test harness would write its bookkeeping schema into the development database (the run fails; cleanup in `docs/specs/001-database/quickstart.md` §5).
 
 ---
 
@@ -111,3 +116,47 @@ A change is done only when:
   - **MAJOR**: a principle is removed or redefined incompatibly.
   - **MINOR**: a principle or section is added or materially expanded.
   - **PATCH**: clarifications and wording fixes.
+
+<!-- speckit-agents:start -->
+# Spec-Kit agents: shared rules
+
+Every agent (coordinator, planner, developer, verifier, bug-fixer, idea-assessor) follows these rules.
+
+## Artifact layering
+Each artifact holds only what is new at its level. Upstream holds the context; never restate it.
+
+| Level | Holds | Context from |
+|-------|-------|--------------|
+| constitution.md | project-wide principles, stack, standards | — |
+| spec.md | what/why: stories, FR-/SC- IDs, edge cases | constitution |
+| plan.md (+ research, data-model, contracts) | how: design decisions, structure, deviations | constitution, spec |
+| tasks.md | checklist of tasks | spec, plan |
+| reports (analyze, converge, bug, assessment) | findings and verdicts | the artifacts they check |
+
+- Refer upstream by ID or section (`FR-003`, `constitution §Testing`, `plan §Data`), never by copying text.
+- Don't repeat principles, stack or standards the constitution already sets; write only feature-specific choices and deviations.
+- Skill templates: fill only the sections that add information at that level. Delete empty, boilerplate or restating sections; no intros, summaries, "overview" or "context" sections.
+- tasks.md is the checklist only: `- [ ] T001 [P] [US1] <action> in <path>` plus phase headings. No descriptions, rationale or notes.
+- Need context for a level? Read the upstream files, don't ask for it to be copied down.
+
+## Reading
+- Read only the files the step needs; prefer Grep/section reads over whole-file reads for large files.
+- Don't re-read a file already given in the call input.
+
+## Reply format
+Reply with this block only. No preamble, summary or file contents; paths and IDs instead of prose. Omit empty fields.
+```
+STATUS: done | blocked | needs-input
+SKILL: <skill run>
+ARTIFACTS: <paths written>
+RESULT: <verdict / Converged / counts>
+FINDINGS: <one line each: ID, tag code|spec|plan|tasks, file:line or req ID, issue>
+QUESTIONS: <for the user>
+SKILL_REQUEST: <skill> — <why>
+```
+
+## Missing skills
+- Run only skills listed in your frontmatter. Never imitate or improvise another skill's output.
+- Subagents: if a step needs any other skill, return `STATUS: blocked` with `SKILL_REQUEST`.
+- Coordinator: on `SKILL_REQUEST`, route the step to the agent that owns the skill and resume; if none does, ask the user to install or assign it.
+<!-- speckit-agents:end -->

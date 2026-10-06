@@ -1,4 +1,13 @@
+use std::process::ExitCode;
+
 use actix_web::{App, HttpServer, Responder, get, web};
+use paleo_api::config::database_options_from_env;
+use paleo_api::db::{
+    MIGRATOR, STARTUP_WAIT, StartupError, collation_version_warning, connect_with_retry,
+    verify_migrations,
+};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{Connection, PgPool};
 
 #[get("/")]
 async fn root() -> impl Responder {
@@ -85,10 +94,37 @@ async fn genera() -> impl Responder {
     "List of genera"
 }
 
+/// Startup order: config → connect → migration check → collation check → bind
+/// (plan §Startup contract). Never applies migrations.
+async fn check_database() -> Result<PgConnectOptions, StartupError> {
+    let opts = database_options_from_env(|key| std::env::var(key).ok())?;
+    let mut conn = connect_with_retry(&opts, STARTUP_WAIT).await?;
+    for warning in verify_migrations(&mut conn, &MIGRATOR).await? {
+        eprintln!("paleo_api: warning: {warning}");
+    }
+    if let Some(warning) = collation_version_warning(&mut conn).await {
+        eprintln!("paleo_api: warning: {warning}");
+    }
+    let _ = conn.close().await;
+    Ok(opts)
+}
+
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    HttpServer::new(move || {
+async fn main() -> ExitCode {
+    let opts = match check_database().await {
+        Ok(opts) => opts,
+        Err(err) => {
+            eprintln!("paleo_api: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let pool: PgPool = PgPoolOptions::new()
+        .max_connections(10)
+        .connect_lazy_with(opts);
+
+    let server = HttpServer::new(move || {
         App::new()
+            .app_data(web::Data::new(pool.clone()))
             .service(root)
             .service(species)
             .service(eras)
@@ -110,7 +146,17 @@ async fn main() -> std::io::Result<()> {
                     .service(genera),
             )
     })
-    .bind(("127.0.0.1", 8000))?
-    .run()
-    .await
+    .bind(("127.0.0.1", 8000));
+
+    let result = match server {
+        Ok(server) => server.run().await,
+        Err(err) => Err(err),
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("paleo_api: server error: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }
