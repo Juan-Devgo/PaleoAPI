@@ -2,7 +2,12 @@
 name = "paleo_api"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
 
 [dependencies]
 actix-web = "4"
 serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "time"] }
