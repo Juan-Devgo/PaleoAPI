@@ -75,7 +75,7 @@
 
 - **Decision:** `tests/api/` is one test binary. Each test is `#[sqlx::test]` taking `(PgPoolOptions, PgConnectOptions)`, builds the pool with `paleo_api::db::api_connect_options` (same tuning as production, R3), and drives `paleo_api::api::app(..)` through `actix_web::test::init_service` + `call_service` on the sqlx tokio runtime (handlers only await sqlx futures; no actix `System` needed). Table builders and `explain` are reused from `tests/db/support.rs` via `#[path]`.
 - **Query plans:** the list-SQL builders and the fixed read statements' SQL constants are public (plan §Project Structure), so `tests/api/query_plans.rs` `EXPLAIN`s the exact SQL the API runs (with binds) on the 001 fixture under `enable_seqscan = off` (001-R15).
-- **Latency:** `tests/api/performance.rs` loads the 001 fixture with `#[sqlx::test(fixtures(path = "../db/fixtures", scripts("index_dataset")))]`, then times in-process `call_service` (server-side, no network) for each read endpoint shape, 1 warm-up + 20 runs, p95 < 50 ms.
+- **Latency:** `tests/api/performance.rs` is a plain `#[sqlx::test]` that loads the 001 fixture (`index_dataset.sql`) through `exec_script`, then times in-process `call_service` (server-side, no network) per read shape: 1 warm-up + one 20-run round, release-only via `#[cfg_attr(debug_assertions, ignore = ...)]`, run under `--release` (plan §Cases `performance.rs`).
 - **Risk:** if a handler ever needs actix's runtime (`web::block`, `actix_rt::spawn`), tests must switch to `#[actix_web::test]` with a manually created test database; no current design element needs it.
 
 ## R12. OpenAPI

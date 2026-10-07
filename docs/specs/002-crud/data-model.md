@@ -60,6 +60,14 @@ New statement shapes (001-DM §6.1 requires re-verification of any new shape). A
 
 Reads keep the 001-DM §6.1 shapes (Q-E1 … Q-S13), including the count variants; period and rank page SQL add only the parent PK join (plan §Read path). Every nested listing first checks its parent with a PK lookup (`404`).
 
+Read shapes that deviate from the 001-DM §6.1 text (T059; 001 artifacts unchanged, plan §Read path):
+
+| ID | 001-DM §6.1 text | Shape run | Index |
+|---|---|---|---|
+| Q-S6 | `genus_id IN (SELECT g.id …)` | `s.genus_id = ANY(ARRAY(SELECT g.id FROM … WHERE <rank>.<parent>_id = $n))` (InitPlan, computed once) | unchanged: parent indexes along the chain + `species_genus_idx` |
+| Q-S12 periods | `species_id = ANY($1)` | `FROM unnest($1::text[]) AS u(id) CROSS JOIN LATERAL (SELECT … FROM species_periods l WHERE l.species_id = u.id OFFSET 0)`, joined to `periods`, `eras` | `species_periods_pk` per id (not a skip scan of `species_periods_period_idx`), `periods_pk`, `eras_pk` |
+| Q-S12 lineage | per species id | `FROM genera g JOIN … domains WHERE g.id = ANY($1)` on the page's distinct `genus_id`s | `genera_pk` … `domains_pk` |
+
 ## 4. Error map (SQLSTATE + constraint → response)
 
 Applies to database errors raised during the write or at `COMMIT`. After pre-validation (research R9) only duplicates (`23505`) are expected; the other rows cover races. `DETAIL`/`MESSAGE`/`HINT` are never forwarded (001-DM §8). Field attribution for multi-field rules follows §6.
@@ -80,9 +88,14 @@ Applies to database errors raised during the write or at `COMMIT`. After pre-val
 | `23514` | `countries_min_continents_ck`, `species_min_periods_ck` | `COMMIT` | `422` `continent_ids` / `period_ids` |
 | `23P01` | `eras_range_ex`, `periods_range_ex` | any | `422` per §6 |
 | `23514` | `*_id_immutable_ck`, `*_no_truncate_ck`, `country_continents_continent_type_ck` | — | `500` (the API never issues these writes) |
+| `23502` | NOT NULL | any | `500` (required fields are validated first; a `NULL` reaching the database is a bug) |
 | `0A000`, `40001`, `40P01`, `22003`, other | — | — | `500 INTERNAL_ERROR`; one stderr line with SQLSTATE and constraint only |
 
-`<R>` is the resource's code stem: `ERA`, `PERIOD`, `DOMAIN`, `KINGDOM`, `PHYLUM`, `CLASS`, `ORDER`, `FAMILY`, `GENUS`, `CONTINENT`, `COUNTRY`, `SPECIES`. `tests/api/error_map.rs` asserts every constraint and unique index in `pg_constraint`/`pg_index` (schema `public`) plus the trigger-raised names of 001-DM §1.1 has a row here.
+`<R>` is the resource's code stem: `ERA`, `PERIOD`, `DOMAIN`, `KINGDOM`, `PHYLUM`, `CLASS`, `ORDER`, `FAMILY`, `GENUS`, `CONTINENT`, `COUNTRY`, `SPECIES`. `tests/api/error_map.rs` asserts every constraint and unique index in `pg_constraint`/`pg_index` (schema `public`) plus the trigger-raised names of 001-DM §1.1 has a row here, excluding:
+
+- `contype = 'n'`: the NOT NULL rows PostgreSQL 18 records in `pg_constraint`; they raise `23502` → `500` (row above).
+- `contype = 't'`: constraint triggers; they raise the `*_ck` names checked through the test's `trigger_names`, not their own names.
+- constraints and unique indexes of `_sqlx_migrations` (migration bookkeeping, never written by the API).
 
 ## 5. Delete dependents (spec §4.10 delete protection)
 

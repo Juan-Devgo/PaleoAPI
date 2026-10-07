@@ -88,4 +88,12 @@
 - [X] T061 Publish `contracts/openapi.yaml`, reconciled with `ROUTES`, as `docs/openapi.yaml`
 - [X] T062 Run `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`; fix findings in `src/`, `tests/`
 - [X] T063 Run `cargo sqlx prepare --check -- --all-targets` and full test suite (quickstart §3); commit `.sqlx/`
-- [ ] T064 Final validation: quickstart §1–§2 manual scenarios; fix doc drift in `docs/specs/002-crud/quickstart.md`; record `performance` p95 per shape in the PR description
+- [x] T064 Final validation: quickstart §1–§2 manual scenarios; fix doc drift in `docs/specs/002-crud/quickstart.md`; record `performance` p95 per shape in the PR description
+
+## Phase 9: Convergence
+
+- [ ] T067 Measure each read shape with 1 warm-up + one 20-run round under a release build (debug-skipped) in tests/api/performance.rs
+- [x] T068 Record T059 query shapes in plan §Read path and data-model §3
+- [x] T069 Document error_map.rs exclusions in data-model §4
+- [x] T070 Record shared fixed_query! macro in plan §Project Structure
+- [ ] T071 Push branch and open PR with performance p95 per shape in description

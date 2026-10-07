@@ -56,7 +56,7 @@ Remove them afterwards with `docker compose down -v` (001 quickstart §7) or by 
 set -a; . ./.env; set +a
 DATABASE_URL="$TEST_DATABASE_URL" cargo test --test api                    # HTTP contract, every AC in spec §6
 DATABASE_URL="$TEST_DATABASE_URL" cargo test --test api query_plans        # every read and write-lookup SQL is index-served (001 fixture)
-DATABASE_URL="$TEST_DATABASE_URL" cargo test --test api performance        # p95 < 50 ms per read shape (001 fixture)
+DATABASE_URL="$TEST_DATABASE_URL" cargo test --release --test api performance -- --nocapture   # release only; prints p95 < 50 ms per read shape (001 fixture)
 DATABASE_URL="$TEST_DATABASE_URL" cargo test --test api openapi            # docs/openapi.yaml matches the routes
 DATABASE_URL="$TEST_DATABASE_URL" cargo test                               # everything, including Spec 001 suites
 cargo fmt --check
@@ -64,7 +64,7 @@ cargo clippy --all-targets -- -D warnings
 cargo sqlx prepare --check -- --all-targets   # uses the dev DATABASE_URL (migrated); .sqlx/ is current
 ```
 
-**Expected:** all pass. `performance` prints each shape's p95; record them in the PR description. Write behavior (create, update, delete, `409`, `422` details, check order) is validated only by the `api` suite, which installs the test-only gate (plan §Constitution Check II, research R4).
+**Expected:** all pass. Debug runs (`cargo test` without `--release`) report `performance` as ignored, so the `--release` line is required before every PR (plan §Cases `performance.rs`); it prints each shape's p95 from one 20-run round; record them in the PR description. Write behavior (create, update, delete, `409`, `422` details, check order) is validated only by the `api` suite, which installs the test-only gate (plan §Constitution Check II, research R4).
 
 ## 4. Troubleshooting
 

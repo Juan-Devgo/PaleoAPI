@@ -84,9 +84,9 @@ pub fn is_mapped(constraint: &str) -> bool;       // error_map.rs completeness
 // list SQL builders push onto a caller-owned builder, so tests can prefix EXPLAIN
 pub fn push_page_sql(qb: &mut QueryBuilder<'_, Postgres>, q: &ListQuery<F, S>);   // one pair per list module
 pub fn push_count_sql(qb: &mut QueryBuilder<'_, Postgres>, q: &ListQuery<F, S>);
-// fixed read statements (Q-E3, Q-P4, Q-T3, Q-K2, Q-S12, Q-S13): each module declares its SQL once through a local
-// `macro_rules!` taking the literal as `$sql:tt`, expanding to `pub const <NAME>_SQL: &str` and the `query_as!` call,
-// so tests EXPLAIN the text the API prepares; taxonomy exposes its per-rank strings through `Rank`
+// fixed read statements (Q-E3, Q-P4, Q-T3, Q-K2, Q-S12, Q-S13): each module declares its SQL once through the one
+// shared `fixed_query!` macro_rules! in src/api/mod.rs (literal taken as `$sql:tt`), expanding to `pub const <NAME>_SQL: &str`
+// and a fn running `query_as!` on it, so tests EXPLAIN the text the API prepares; taxonomy exposes its per-rank strings through `Rank`
 pub const ERA_BY_ID_SQL: &str;                     // one per statement, e.g. PERIOD_BY_ID_SQL, COUNTRY_CONTINENTS_SQL, SPECIES_PERIODS_SQL
 // src/db.rs
 pub fn api_connect_options(opts: PgConnectOptions) -> PgConnectOptions;
@@ -111,6 +111,7 @@ App-level middleware, outermost first: `DefaultHeaders` (CORS headers) → `OPTI
 
 - **Parsing (`params.rs`):** `web::Query<Vec<(String, String)>>::from_query` (no new dependency); a malformed query string → `400`. Known keys per endpoint; a known key twice → `400`; unknown keys ignored. `page`/`limit`: ASCII digits only, ranges of spec §4.6. `sort`: per-endpoint allow-list; message lists it (AC 6.1.4). Slug filters use the slug check; `diet`/`type` use their enums; `q` trimmed, 3–64 chars, `\`, `%`, `_` escaped, bound into `ILIKE $n ESCAPE '\'` (001-plan §Notes 6).
 - **Shapes:** builders emit 001-DM §6.1 filter and order text exactly (period and rank page SQL add only the parent PK join, §Embedding), including `ORDER BY lower(name) COLLATE paleo_name_sort [DESC], id`; `discovery_year` sorts use `NULLS LAST` in both directions; descending non-name sorts add `id` ascending as tie-break (spec §4.7).
+- **Deviations from 001-DM §6.1 text (T059, PostgreSQL 18 plans):** Q-S6 is `s.genus_id = ANY(ARRAY(SELECT g.id FROM … WHERE <rank>.<parent>_id = $n))` instead of `IN (SELECT …)`, so the genus set is an InitPlan computed once rather than a per-row probe of the rank chain; same indexes. Q-S12 periods (`SPECIES_PERIODS_SQL`, `src/api/species/card.rs`) is `unnest($1::text[]) CROSS JOIN LATERAL (… species_periods WHERE species_id = u.id OFFSET 0)`, one `species_periods_pk` probe per id, instead of `species_id = ANY($1)` (planned as a skip scan of all of `species_periods_period_idx`); Q-S12 lineage runs on the page's distinct `genus_id`s (`genera_pk` … `domains_pk`). `query_plans.rs` verifies these texts (data-model §3).
 
 | Endpoint | Filters → shape | Sorts → shape |
 |---|---|---|
@@ -132,7 +133,7 @@ App-level middleware, outermost first: `DefaultHeaders` (CORS headers) → `OPTI
 | Period | `era` | joined on `eras_pk` in the page / by-id statement (Q-P1…Q-P3 page SQL, Q-P4) |
 | Rank ≠ domain | parent summary | joined on `<parent>_pk` in the page / by-id statement (Q-T1, Q-T2 page SQL, Q-T3) |
 | Country | `continents` | one Q-K2 link statement (`country_id = ANY($1)`) for all ids of the page, grouped in Rust |
-| Species | taxonomy, periods, continents, countries | four Q-S12 statements (`species_id = ANY($1)`) for all ids of the page, grouped in Rust |
+| Species | taxonomy, periods, continents, countries | four Q-S12 statements for the page, grouped in Rust: continents and countries `species_id = ANY($1)`; periods per-id `LATERAL` probe; lineage by the page's distinct genus ids (§Read path Deviations) |
 
 Count statements never join. The joined page SQL differs from the bare 001-DM §6.1 text, so `query_plans.rs` re-verifies it (001-DM §6.1 last paragraph).
 - **Response:** `http::cached_json(&req, &body)` serializes once, sets `ETag`/`Cache-Control`, answers `304` on a match (R7).
@@ -194,7 +195,7 @@ Every write runs in one READ COMMITTED transaction: lock/lookup (step 4) → val
 | `species_filters.rs` | AC 6.5.3 (filter), 6.5.7–6.5.9, spec §4.8, §5.6 sorts | each filter alone and combined; each rank filter; `q` literal `%%_`; `discovery_year` nulls last both directions; well-formed unknown filter id → `200`, empty `data` |
 | `error_map.rs` | data-model §4 | every `public` constraint and unique index name + trigger-raised names → `is_mapped` |
 | `query_plans.rs` | Constitution III, 001-DM §6.1, data-model §3 | 001 fixture + `ANALYZE`; under `enable_seqscan = off`, no Seq Scan on any resource or link table and an allowed index from 001-DM §6.1 for: every endpoint × filter × sort page SQL (incl. the joined period/rank forms) and count SQL; detail lookups Q-E3, Q-P4, Q-T3 (all 7 ranks), Q-K2, Q-S13; list embeddings Q-K2 links and Q-S12 (all four statements) with a page of ids; Q-W5, Q-W6, Q-W7, Q-W9, Q-W10. Species `q` count SQL also passes the 001-DM §6.1 Q-S11 selectivity check under `EXPLAIN (ANALYZE)` with the fixture's 3-character and longer terms: each trigram Bitmap Index Scan returns < 10% of `species` rows; `Rows Removed by Index Recheck` absent or < 10% |
-| `performance.rs` | Constitution III, spec §7 | 001 fixture; species default page with `limit=100`, each species filter, `q` (fixture terms), detail, era/period/rank/continent/country lists and details; 1 warm-up + 20 runs each; p95 < 50 ms; prints p95 per shape |
+| `performance.rs` | Constitution III, spec §7 | 001 fixture; species default page with `limit=100`, each species filter, `q` (fixture terms), detail, era/period/rank/continent/country lists and details; per shape 1 warm-up + one 20-run round (no retries, no best-of-N); p95 (19th of 20 sorted) < 50 ms; prints p95 per shape. Release-only gate: `#[cfg_attr(debug_assertions, ignore = "release-only: run with --release")]`, so debug `cargo test` reports it ignored; run alone as quickstart §3 `cargo test --release --test api performance -- --nocapture` (the name filter keeps other tests from loading the machine). Required before every PR; the printed p95s go in the PR description |
 | `openapi.rs` | AGENTS.md §5.4, R12 | `docs/openapi.yaml` paths × methods == `ROUTES` |
 | `startup.rs` (h) serve | AC 6.1.15 | raw HTTP `GET /` to the running binary → `404 ROUTE_NOT_FOUND` envelope (stub routes replaced by `api::app`) |
 | `startup.rs` (h) deny | AC 6.1.9, spec §4.4 | raw HTTP `POST /api/v1/eras` with `Bearer <tokens::TEST_ADMIN_TOKEN>` to the running binary → `401` |
