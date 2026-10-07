@@ -79,8 +79,8 @@ impl fmt::Display for StartupError {
 impl std::error::Error for StartupError {}
 
 /// Connection options for the API pool: custom plans for every execution (research R3).
-pub fn api_connect_options(_opts: PgConnectOptions) -> PgConnectOptions {
-    todo!()
+pub fn api_connect_options(opts: PgConnectOptions) -> PgConnectOptions {
+    opts.options([("plan_cache_mode", "force_custom_plan")])
 }
 
 /// Pause between connection attempts (research R5).
