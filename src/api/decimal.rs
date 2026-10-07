@@ -1,9 +1,17 @@
 //! Exact decimals from JSON number text to `numeric` and back (spec §4.13, research R1).
 
 use std::fmt;
+use std::str::FromStr;
 
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, Zero};
+use serde::ser::Error as _;
 use serde::{Serialize, Serializer};
+
+/// Longest accepted JSON number text (spec §4.13).
+pub const MAX_TEXT_LEN: usize = 40;
+
+/// Integer digits allowed: `|v| < 10^15` (spec §4.13).
+const MAX_INTEGER_DIGITS: i64 = 15;
 
 /// Why a JSON number is not an acceptable decimal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,29 +28,61 @@ pub struct Decimal(BigDecimal);
 
 impl Decimal {
     /// Parses a JSON number with at most `max_places` significant decimal places.
-    pub fn parse(_n: &serde_json::Number, _max_places: u32) -> Result<Self, DecimalError> {
-        todo!()
+    ///
+    /// Bounds are checked on the text and on digit counts before any arithmetic,
+    /// so huge exponents never reach a formatter or the database (research R1).
+    pub fn parse(n: &serde_json::Number, max_places: u32) -> Result<Self, DecimalError> {
+        let text = n.as_str();
+        if text.len() > MAX_TEXT_LEN {
+            return Err(DecimalError::TooLarge);
+        }
+        let v = BigDecimal::from_str(text).map_err(|_| DecimalError::TooLarge)?;
+        let (int, scale) = v.as_bigint_and_exponent();
+        if int.is_zero() {
+            return Ok(Self(BigDecimal::zero()));
+        }
+        let digits = i64::try_from(v.digits()).map_err(|_| DecimalError::TooLarge)?;
+        if digits.saturating_sub(scale) > MAX_INTEGER_DIGITS {
+            return Err(DecimalError::TooLarge);
+        }
+        let v = v.normalized();
+        let (_, scale) = v.as_bigint_and_exponent();
+        if scale > i64::from(max_places) {
+            return Err(DecimalError::TooManyPlaces { max: max_places });
+        }
+        Ok(Self(v))
     }
 
     /// A stored value, normalized.
-    pub fn from_db(_v: BigDecimal) -> Self {
-        todo!()
+    pub fn from_db(v: BigDecimal) -> Self {
+        Self(v.normalized())
     }
 
     pub fn as_big(&self) -> &BigDecimal {
         &self.0
     }
+
+    pub fn into_big(self) -> BigDecimal {
+        self.0
+    }
+}
+
+impl From<BigDecimal> for Decimal {
+    fn from(v: BigDecimal) -> Self {
+        Self::from_db(v)
+    }
 }
 
 impl fmt::Display for Decimal {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0.to_plain_string())
     }
 }
 
 impl Serialize for Decimal {
-    fn serialize<S: Serializer>(&self, _s: S) -> Result<S::Ok, S::Error> {
-        todo!()
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let n = serde_json::Number::from_str(&self.0.to_plain_string()).map_err(S::Error::custom)?;
+        n.serialize(s)
     }
 }
 
