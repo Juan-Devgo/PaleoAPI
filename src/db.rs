@@ -78,6 +78,11 @@ impl fmt::Display for StartupError {
 
 impl std::error::Error for StartupError {}
 
+/// Connection options for the API pool: custom plans for every execution (research R3).
+pub fn api_connect_options(_opts: PgConnectOptions) -> PgConnectOptions {
+    todo!()
+}
+
 /// Pause between connection attempts (research R5).
 const RETRY_EVERY: Duration = Duration::from_millis(500);
 
