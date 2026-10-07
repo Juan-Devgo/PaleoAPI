@@ -1,12 +1,16 @@
 //! Runs the API binary and checks that it refuses to start safely
 //! (AC 2, AC 15, FR-002–FR-004).
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use sqlx::{AssertSqlSafe, PgPool};
+
+#[path = "api/tokens.rs"]
+#[allow(dead_code)]
+mod tokens;
 
 const LEAKS: [&str; 2] = ["leaky_user", "leaky-secret-123"];
 const KILL_AFTER: Duration = Duration::from_secs(15);
@@ -118,6 +122,18 @@ async fn migration_rows(pool: &PgPool) -> Vec<String> {
         .fetch_all(pool)
         .await
         .unwrap()
+}
+
+/// Sends one raw HTTP/1.1 request to the running API and returns the whole response.
+fn raw_http(request: &str) -> String {
+    let mut stream = TcpStream::connect("127.0.0.1:8000").expect("connect to the API");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    response
 }
 
 async fn exec(pool: &PgPool, sql: &str) {
@@ -232,6 +248,21 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
         }
         std::thread::sleep(Duration::from_millis(100));
     };
+    // (h) serve: the binary serves `api::app`, not the old stub routes (AC 6.1.15).
+    let served = listening
+        .then(|| raw_http("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"));
+    // (h) deny: the binary installs the deny-all gate, so even the test credential is 401
+    // (AC 6.1.9, spec §4.4).
+    let denied = listening.then(|| {
+        let body = r#"{"id":"mesozoic","name":"Mesozoic","start_mya":251.902,"end_mya":66}"#;
+        raw_http(&format!(
+            "POST /api/v1/eras HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
+             Authorization: Bearer {}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\n\r\n{body}",
+            tokens::TEST_ADMIN_TOKEN,
+            body.len()
+        ))
+    });
     let still_running = child.try_wait().unwrap().is_none();
     child.kill().ok();
     child.wait().unwrap();
@@ -246,4 +277,19 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
         stderr.contains("paleo_api: warning:") && stderr.contains("paleo_name_sort"),
         "missing collation warning: {stderr}"
     );
+    let served = served.unwrap();
+    assert!(
+        served.starts_with("HTTP/1.1 404"),
+        "GET / must be 404: {served}"
+    );
+    assert!(
+        served.contains("\"ROUTE_NOT_FOUND\""),
+        "GET / must answer the ROUTE_NOT_FOUND envelope: {served}"
+    );
+    let denied = denied.unwrap();
+    assert!(
+        denied.starts_with("HTTP/1.1 401"),
+        "writes must be denied: {denied}"
+    );
+    assert!(denied.contains("\"UNAUTHORIZED\""), "{denied}");
 }

@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT sp.species_id, p.id, p.name, e.id AS era_id, e.name AS era_name FROM unnest($1::text[]) AS u(id) CROSS JOIN LATERAL (SELECT l.species_id, l.period_id FROM species_periods l WHERE l.species_id = u.id OFFSET 0) sp JOIN periods p ON p.id = sp.period_id JOIN eras e ON e.id = p.era_id ORDER BY p.start_mya DESC, p.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "species_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "species_periods",
+            "name": "species_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "periods",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "periods",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "era_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "eras",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "era_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "eras",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "847d4b33b94bc0647873965543abe824d6453b96f1316c7ae8753fd04597737f"
+}

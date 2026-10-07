@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE species SET name = COALESCE($2, name), scientific_name = COALESCE($3, scientific_name), diet = COALESCE($4, diet), description = COALESCE($5, description), genus_id = COALESCE($6, genus_id), discovery_year = CASE WHEN $7 THEN $8::int ELSE discovery_year END, image_url = CASE WHEN $9 THEN $10::text ELSE image_url END, length_min_m = CASE WHEN $11 THEN $12::numeric ELSE length_min_m END, length_max_m = CASE WHEN $11 THEN $13::numeric ELSE length_max_m END, height_min_m = CASE WHEN $11 THEN $14::numeric ELSE height_min_m END, height_max_m = CASE WHEN $11 THEN $15::numeric ELSE height_max_m END, weight_min_kg = CASE WHEN $11 THEN $16::numeric ELSE weight_min_kg END, weight_max_kg = CASE WHEN $11 THEN $17::numeric ELSE weight_max_kg END WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool",
+        "Int4",
+        "Bool",
+        "Text",
+        "Bool",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c7ca8bddc568e59ae2b3b03508e82f5cea7ea0e0ec58ed50bd8309095b6cc749"
+}

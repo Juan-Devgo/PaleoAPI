@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM species_periods WHERE species_id = $1 AND period_id <> ALL($2::text[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8a854801ef1046d4bf2c1ae7bcc5f520bd8d7d13fafac783c6327b2e7f58d3bb"
+}

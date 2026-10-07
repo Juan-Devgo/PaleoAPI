@@ -1,8 +1,8 @@
 # Spec 002 — Core CRUD for PaleoAPI Resources
 
-**Status:** Draft
+**Status:** Approved
 **Created:** 2026-09-26
-**Last updated:** 2026-10-03
+**Last updated:** 2026-10-06
 **Constitution version:** 1.1.0
 **Depends on:** [Spec 001 — Database Foundation](../001-database/spec.md)
 
@@ -19,6 +19,11 @@ This spec defines the API contract: what each endpoint accepts, returns, and rej
 ### Session 2026-10-03
 
 - Q: Should `q` accept 2-character terms, given that a 2-character substring search cannot be served by an index (Constitution III)? → A: No. `q` is 3–64 characters after trimming (§5 species filters, AC 8). Raised during Spec 001 analysis.
+
+### Session 2026-10-06
+
+- Q: Do decimal fields have an upper bound? → A: Yes. A decimal's absolute value must be below 10^15 and its JSON number text at most 40 characters; otherwise `422` (§4.13).
+- Q: Do trailing zeros count as decimal places? → A: No. `66.0000` is valid where 2 places are allowed. Decimals are returned normalized without trailing zeros (`66.0` → `66`) (§4.13).
 
 ## 2. Motivation
 
@@ -94,7 +99,7 @@ Validation errors (`422`) also include a `details` array with one entry per prob
     "code": "VALIDATION_FAILED",
     "message": "The request body has 2 invalid fields.",
     "details": [
-      { "field": "end_mya", "message": "end_mya (201.4) must be less than start_mya (145.0)." },
+      { "field": "end_mya", "message": "end_mya (201.4) must be less than start_mya (145)." },
       { "field": "id", "message": "id must be 2–64 lowercase letters, digits, or hyphens." }
     ]
   }
@@ -202,7 +207,7 @@ Data changes rarely, so reads may be served from HTTP caches, and clients can al
 
 - **Text fields** have surrounding whitespace trimmed before validation and storage. Lengths are counted in Unicode characters after trimming. A value that is empty after trimming counts as missing.
 - `name`: required, 1–64 characters, unique within its resource type (case-insensitive), except where a resource says otherwise. A duplicate returns `409`. Renaming a resource to a different casing of its own name is allowed.
-- **Decimals** are sent and returned as JSON numbers. A value with more decimal places than a field allows returns `422`. It is never silently rounded.
+- **Decimals** are sent and returned as JSON numbers. A value with more decimal places than a field allows returns `422`. It is never silently rounded. Trailing zeros do not count as decimal places, and decimals are returned without them (`66.0` is returned as `66`). A decimal whose absolute value is `≥ 10^15`, or whose JSON number text is longer than 40 characters, returns `422`.
 - **Lists of ids** reject duplicates with `422`. Each list field has a maximum length, stated per resource.
 - A **summary** of a related resource is `{ "id": "...", "name": "..." }`. Continent summaries also include `type`.
 
@@ -390,7 +395,7 @@ All paths are under `/api/v1/taxonomy`. `{rank}` is the plural segment and `{par
   "description": "...",
   "discovery_year": 1905,
   "image_url": "https://example.org/trex.png",
-  "size": { "length_m": { "min": 11.0, "max": 12.3 }, "height_m": null, "weight_kg": { "min": 5000, "max": 8000 } },
+  "size": { "length_m": { "min": 11, "max": 12.3 }, "height_m": null, "weight_kg": { "min": 5000, "max": 8000 } },
   "taxonomy": {
     "domain":  { "id": "eukaryota", "name": "Eukaryota" },
     "kingdom": { "id": "animalia", "name": "Animalia" },

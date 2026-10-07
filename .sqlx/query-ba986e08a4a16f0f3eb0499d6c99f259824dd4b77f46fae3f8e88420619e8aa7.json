@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT sk.species_id AS id, count(*) OVER () AS \"total!\" FROM species_countries sk WHERE sk.country_id = $1 ORDER BY sk.species_id LIMIT 5",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "species_countries",
+            "name": "species_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "ba986e08a4a16f0f3eb0499d6c99f259824dd4b77f46fae3f8e88420619e8aa7"
+}
