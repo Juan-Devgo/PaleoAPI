@@ -99,6 +99,37 @@ pub fn app(
         )
 }
 
+/// Runs a list: the count first, then the page unless it lies past the end
+/// (plan §Read path Execution).
+pub(crate) async fn paged<R>(
+    conn: &mut sqlx::PgConnection,
+    page: params::Page,
+    count_sql: impl FnOnce(&mut sqlx::QueryBuilder<sqlx::Postgres>),
+    page_sql: impl FnOnce(&mut sqlx::QueryBuilder<sqlx::Postgres>),
+) -> sqlx::Result<(i64, Vec<R>)>
+where
+    R: for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
+{
+    let mut qb = sqlx::QueryBuilder::new("");
+    count_sql(&mut qb);
+    let total: i64 = qb.build_query_scalar().fetch_one(&mut *conn).await?;
+    if page.offset() >= total {
+        return Ok((total, Vec::new()));
+    }
+    let mut qb = sqlx::QueryBuilder::new("");
+    page_sql(&mut qb);
+    let rows = qb.build_query_as::<R>().fetch_all(&mut *conn).await?;
+    Ok((total, rows))
+}
+
+/// One snapshot for every statement of a read (research R8).
+pub(crate) async fn read_tx(
+    pool: &PgPool,
+) -> sqlx::Result<sqlx::Transaction<'static, sqlx::Postgres>> {
+    pool.begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .await
+}
+
 /// Every `OPTIONS` request is a successful preflight for public reads (research R6).
 fn preflight() -> HttpResponse {
     HttpResponse::NoContent()
