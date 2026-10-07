@@ -330,7 +330,10 @@ mod tests {
     fn q_bounds_and_escaping() {
         assert_eq!(params("").q().unwrap(), None);
         assert_eq!(params("q=REX").q().unwrap().as_deref(), Some("%REX%"));
-        assert_eq!(params("q=%20%20rex%20").q().unwrap().as_deref(), Some("%rex%"));
+        assert_eq!(
+            params("q=%20%20rex%20").q().unwrap().as_deref(),
+            Some("%rex%")
+        );
         assert_eq!(
             params("q=%25%25_").q().unwrap().as_deref(),
             Some(r"%\%\%\_%")

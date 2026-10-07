@@ -202,7 +202,11 @@ fn test_tokens_are_absent_from_src() {
 fn deny_all_is_the_only_admin_gate_in_src() {
     let hits = grep_src("impl AdminGate for");
     let impls: Vec<&str> = hits.lines().collect();
-    assert_eq!(impls.len(), 1, "expected one AdminGate impl in src/: {impls:?}");
+    assert_eq!(
+        impls.len(),
+        1,
+        "expected one AdminGate impl in src/: {impls:?}"
+    );
     assert!(
         impls[0].contains("impl AdminGate for DenyAll"),
         "the only AdminGate in src/ must be DenyAll: {impls:?}"

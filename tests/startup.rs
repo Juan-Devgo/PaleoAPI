@@ -245,9 +245,8 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
         std::thread::sleep(Duration::from_millis(100));
     };
     // (h) serve: the binary serves `api::app`, not the old stub routes (AC 6.1.15).
-    let served = listening.then(|| {
-        raw_http("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-    });
+    let served = listening
+        .then(|| raw_http("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"));
     let still_running = child.try_wait().unwrap().is_none();
     child.kill().ok();
     child.wait().unwrap();

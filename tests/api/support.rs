@@ -195,7 +195,9 @@ pub fn assert_error(resp: &Resp, status: u16, code: &str) {
     let body = resp.json();
     assert_eq!(body["error"]["code"], code, "body: {body}");
     assert!(
-        body["error"]["message"].as_str().is_some_and(|m| !m.is_empty()),
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| !m.is_empty()),
         "error message missing: {body}"
     );
 }

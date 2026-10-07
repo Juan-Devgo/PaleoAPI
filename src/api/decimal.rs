@@ -81,7 +81,8 @@ impl fmt::Display for Decimal {
 
 impl Serialize for Decimal {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let n = serde_json::Number::from_str(&self.0.to_plain_string()).map_err(S::Error::custom)?;
+        let n =
+            serde_json::Number::from_str(&self.0.to_plain_string()).map_err(S::Error::custom)?;
         n.serialize(s)
     }
 }
@@ -137,7 +138,13 @@ mod tests {
         let long = format!("1.{}", "0".repeat(39));
         assert_eq!(long.len(), 41);
         assert_eq!(Decimal::parse(&num(&long), 6), Err(DecimalError::TooLarge));
-        for text in ["1e15", "1000000000000000", "-1e15", "1e1000000000", "12345678901234567"] {
+        for text in [
+            "1e15",
+            "1000000000000000",
+            "-1e15",
+            "1e1000000000",
+            "12345678901234567",
+        ] {
             assert_eq!(
                 Decimal::parse(&num(text), 6),
                 Err(DecimalError::TooLarge),

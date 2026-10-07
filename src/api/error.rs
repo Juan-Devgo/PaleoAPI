@@ -161,7 +161,11 @@ impl ApiError {
         Self::new(
             StatusCode::NOT_FOUND,
             format!("{}_NOT_FOUND", res.code()),
-            format!("No {} found with id '{}'.", res.noun(), truncate(id, ID_ECHO)),
+            format!(
+                "No {} found with id '{}'.",
+                res.noun(),
+                truncate(id, ID_ECHO)
+            ),
         )
     }
 
@@ -282,7 +286,8 @@ struct Body<'a> {
 impl ApiError {
     /// The JSON envelope of spec §4.5.
     pub fn body(&self) -> Vec<u8> {
-        let details = (self.status == StatusCode::UNPROCESSABLE_ENTITY).then_some(&self.details[..]);
+        let details =
+            (self.status == StatusCode::UNPROCESSABLE_ENTITY).then_some(&self.details[..]);
         serde_json::to_vec(&Envelope {
             error: Body {
                 code: &self.code,

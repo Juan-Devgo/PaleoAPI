@@ -165,7 +165,8 @@ impl Obj {
 pub fn is_slug(s: &str) -> bool {
     let b = s.as_bytes();
     (2..=64).contains(&b.len())
-        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
         && b[0] != b'-'
         && b[b.len() - 1] != b'-'
         && !s.contains("--")
@@ -460,7 +461,10 @@ mod tests {
         let mut o = obj(json!({ "name": null, "id": "Bad" }));
         assert_eq!(o.required("name", name), None);
         assert_eq!(o.required("id", slug), None);
-        assert_eq!(o.required("start_mya", decimal(3, 0, false, Some(4600))), None);
+        assert_eq!(
+            o.required("start_mya", decimal(3, 0, false, Some(4600))),
+            None
+        );
         assert_eq!(fields(o), ["id", "name", "start_mya"]);
     }
 
@@ -468,8 +472,14 @@ mod tests {
     fn patch_fields() {
         let mut o = obj(json!({ "name": null, "start_mya": 10 }));
         assert_eq!(o.patch("name", self::name), None);
-        assert_eq!(o.patch("end_mya", decimal(3, 0, false, Some(4600))), Some(None));
-        assert!(o.patch("start_mya", decimal(3, 0, false, Some(4600))).is_some());
+        assert_eq!(
+            o.patch("end_mya", decimal(3, 0, false, Some(4600))),
+            Some(None)
+        );
+        assert!(
+            o.patch("start_mya", decimal(3, 0, false, Some(4600)))
+                .is_some()
+        );
         assert_eq!(fields(o), ["name"]);
     }
 
@@ -540,7 +550,11 @@ mod tests {
         assert!(list("period_ids", &json!(["a1", "b2", "c3", "d4"])).is_err());
         assert!(list("period_ids", &json!(["Bad"])).is_err());
         assert!(list("period_ids", &json!("a1")).is_err());
-        assert!(slug_list(0, 3)("continent_ids", &json!([])).unwrap().is_empty());
+        assert!(
+            slug_list(0, 3)("continent_ids", &json!([]))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -550,7 +564,10 @@ mod tests {
             url("image_url", &json!("HttpS://example.org/a.png")).unwrap(),
             "https://example.org/a.png"
         );
-        assert_eq!(url("image_url", &json!(" https://x/y ")).unwrap(), "https://x/y");
+        assert_eq!(
+            url("image_url", &json!(" https://x/y ")).unwrap(),
+            "https://x/y"
+        );
         for bad in [
             "ftp://x",
             "http:///x",
@@ -592,6 +609,9 @@ mod tests {
     #[test]
     fn truncation() {
         assert_eq!(truncate("abc", 5), "abc");
-        assert_eq!(truncate(&"ñ".repeat(40), 32), format!("{}…", "ñ".repeat(32)));
+        assert_eq!(
+            truncate(&"ñ".repeat(40), 32),
+            format!("{}…", "ñ".repeat(32))
+        );
     }
 }
