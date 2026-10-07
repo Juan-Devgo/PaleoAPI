@@ -51,13 +51,87 @@ use self::error::{ApiError, no_store_on_get_errors};
 
 /// Every path under `/api/v1` and the methods it answers (OpenAPI drift test).
 pub const ROUTES: &[(&str, &[Method])] = &[
+    ("/eras", &[Method::GET]),
+    ("/eras/{era_id}", &[Method::GET]),
+    ("/eras/{era_id}/periods", &[Method::GET]),
+    ("/periods", &[Method::GET]),
+    ("/periods/{period_id}", &[Method::GET]),
+    ("/taxonomy/domains", &[Method::GET]),
+    ("/taxonomy/domains/{domain_id}", &[Method::GET]),
+    ("/taxonomy/domains/{domain_id}/kingdoms", &[Method::GET]),
+    ("/taxonomy/kingdoms", &[Method::GET]),
+    ("/taxonomy/kingdoms/{kingdom_id}", &[Method::GET]),
+    ("/taxonomy/kingdoms/{kingdom_id}/phyla", &[Method::GET]),
+    ("/taxonomy/phyla", &[Method::GET]),
+    ("/taxonomy/phyla/{phylum_id}", &[Method::GET]),
+    ("/taxonomy/phyla/{phylum_id}/classes", &[Method::GET]),
+    ("/taxonomy/classes", &[Method::GET]),
+    ("/taxonomy/classes/{class_id}", &[Method::GET]),
+    ("/taxonomy/classes/{class_id}/orders", &[Method::GET]),
+    ("/taxonomy/orders", &[Method::GET]),
+    ("/taxonomy/orders/{order_id}", &[Method::GET]),
+    ("/taxonomy/orders/{order_id}/families", &[Method::GET]),
+    ("/taxonomy/families", &[Method::GET]),
+    ("/taxonomy/families/{family_id}", &[Method::GET]),
+    ("/taxonomy/families/{family_id}/genera", &[Method::GET]),
+    ("/taxonomy/genera", &[Method::GET]),
+    ("/taxonomy/genera/{genus_id}", &[Method::GET]),
+    ("/continents", &[Method::GET]),
+    ("/continents/{continent_id}", &[Method::GET]),
+    ("/continents/{continent_id}/countries", &[Method::GET]),
+    ("/countries", &[Method::GET]),
+    ("/countries/{country_id}", &[Method::GET]),
     ("/species", &[Method::GET]),
     ("/species/{species_id}", &[Method::GET]),
 ];
 
-/// Registers every resource under `/api/v1`.
+/// Registers every resource under `/api/v1`. Taxonomy registers only the six direct
+/// parent/child nested paths, so other pairings fall through to `404` (AC 6.3.6).
 fn routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::resource("/species").route(web::get().to(species::list)))
+    use self::{geography as geo, geologic_time as time};
+
+    cfg.service(web::resource("/eras").route(web::get().to(time::list_eras)))
+        .service(web::resource("/eras/{era_id}").route(web::get().to(time::get_era)))
+        .service(
+            web::resource("/eras/{era_id}/periods").route(web::get().to(time::list_era_periods)),
+        )
+        .service(web::resource("/periods").route(web::get().to(time::list_periods)))
+        .service(web::resource("/periods/{period_id}").route(web::get().to(time::get_period)));
+
+    for rank in taxonomy::RANKS.iter() {
+        let base = format!("/taxonomy/{}", rank.plural);
+        let item = format!("{base}/{{{}_id}}", rank.singular);
+        cfg.service(web::resource(base.as_str()).route(
+            web::get().to(move |req: HttpRequest, pool: web::Data<PgPool>| {
+                taxonomy::list(rank, req, pool)
+            }),
+        ));
+        cfg.service(web::resource(item.as_str()).route(web::get().to(
+            move |req: HttpRequest, path: web::Path<String>, pool: web::Data<PgPool>| {
+                taxonomy::detail(rank, req, path, pool)
+            },
+        )));
+        if let Some(child) = rank.child_rank() {
+            let nested = format!("{item}/{}", child.plural);
+            cfg.service(web::resource(nested.as_str()).route(web::get().to(
+                move |req: HttpRequest, path: web::Path<String>, pool: web::Data<PgPool>| {
+                    taxonomy::list_children(child, req, path, pool)
+                },
+            )));
+        }
+    }
+
+    cfg.service(web::resource("/continents").route(web::get().to(geo::list_continents)))
+        .service(
+            web::resource("/continents/{continent_id}").route(web::get().to(geo::get_continent)),
+        )
+        .service(
+            web::resource("/continents/{continent_id}/countries")
+                .route(web::get().to(geo::list_continent_countries)),
+        )
+        .service(web::resource("/countries").route(web::get().to(geo::list_countries)))
+        .service(web::resource("/countries/{country_id}").route(web::get().to(geo::get_country)))
+        .service(web::resource("/species").route(web::get().to(species::list)))
         .service(web::resource("/species/{species_id}").route(web::get().to(species::detail)));
 }
 
