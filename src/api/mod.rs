@@ -121,11 +121,17 @@ pub const ROUTES: &[(&str, &[Method])] = &[
         "/taxonomy/genera/{genus_id}",
         &[Method::GET, Method::PATCH, Method::DELETE],
     ),
-    ("/continents", &[Method::GET]),
-    ("/continents/{continent_id}", &[Method::GET]),
+    ("/continents", &[Method::GET, Method::POST]),
+    (
+        "/continents/{continent_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
     ("/continents/{continent_id}/countries", &[Method::GET]),
-    ("/countries", &[Method::GET]),
-    ("/countries/{country_id}", &[Method::GET]),
+    ("/countries", &[Method::GET, Method::POST]),
+    (
+        "/countries/{country_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
     ("/species", &[Method::GET]),
     ("/species/{species_id}", &[Method::GET]),
 ];
@@ -219,18 +225,34 @@ fn routes(cfg: &mut web::ServiceConfig) {
         }
     }
 
-    cfg.service(web::resource("/continents").route(web::get().to(geo::list_continents)))
-        .service(
-            web::resource("/continents/{continent_id}").route(web::get().to(geo::get_continent)),
-        )
-        .service(
-            web::resource("/continents/{continent_id}/countries")
-                .route(web::get().to(geo::list_continent_countries)),
-        )
-        .service(web::resource("/countries").route(web::get().to(geo::list_countries)))
-        .service(web::resource("/countries/{country_id}").route(web::get().to(geo::get_country)))
-        .service(web::resource("/species").route(web::get().to(species::list)))
-        .service(web::resource("/species/{species_id}").route(web::get().to(species::detail)));
+    cfg.service(
+        web::resource("/continents")
+            .route(web::get().to(geo::list_continents))
+            .route(web::post().to(geo::create_continent)),
+    )
+    .service(
+        web::resource("/continents/{continent_id}")
+            .route(web::get().to(geo::get_continent))
+            .route(web::patch().to(geo::update_continent))
+            .route(web::delete().to(geo::delete_continent)),
+    )
+    .service(
+        web::resource("/continents/{continent_id}/countries")
+            .route(web::get().to(geo::list_continent_countries)),
+    )
+    .service(
+        web::resource("/countries")
+            .route(web::get().to(geo::list_countries))
+            .route(web::post().to(geo::create_country)),
+    )
+    .service(
+        web::resource("/countries/{country_id}")
+            .route(web::get().to(geo::get_country))
+            .route(web::patch().to(geo::update_country))
+            .route(web::delete().to(geo::delete_country)),
+    )
+    .service(web::resource("/species").route(web::get().to(species::list)))
+    .service(web::resource("/species/{species_id}").route(web::get().to(species::detail)));
 }
 
 /// Builds the application: routes, CORS headers, `OPTIONS`, `404`/`405` envelopes

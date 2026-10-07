@@ -6,12 +6,14 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use serde::Serialize;
 use sqlx::{PgConnection, PgPool, Postgres, QueryBuilder};
 
+use super::auth::AdminGate;
+use super::db_error::{Ctx, Op, continent_countries, map_write};
 use super::error::{ApiError, Resource};
-use super::http::{Many, One, cached_json};
-use super::input::is_slug;
+use super::http::{Many, One, cached_json, created, updated};
+use super::input::{self, Obj, is_slug, one_of, slug, slug_list};
 use super::params::{ListQuery, Pagination, Params, Sort};
 use super::species::card::ContinentSummary;
-use super::{paged, read_tx};
+use super::{begin_write, delete_resource, paged, read_tx, write_body};
 
 // ---------------------------------------------------------------- representations
 
@@ -342,4 +344,347 @@ pub async fn get_country(
         Some(data) => Ok(cached_json(&req, &One { data })),
         None => Err(ApiError::not_found(Resource::Country, &id)),
     }
+}
+
+// ---------------------------------------------------------------- write handlers
+
+const ID_IMMUTABLE: &str =
+    "id cannot be changed. Remove it from the body; create a new resource instead.";
+
+/// `POST /continents`.
+pub async fn create_continent(
+    req: HttpRequest,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let mut tx = begin_write(&pool).await?;
+    let mut o = Obj::new(body)?;
+    let id = o.required("id", slug);
+    let name = o.required("name", input::name);
+    let kind = o.required("type", one_of(CONTINENT_TYPES));
+    o.finish()?;
+    let (Some(id), Some(name), Some(kind)) = (id, name, kind) else {
+        return Err(ApiError::internal());
+    };
+    let ctx = Ctx::new(Resource::Continent, &id, Op::Insert).name(Some(&name));
+    sqlx::query!(
+        "INSERT INTO continents (id, name, type) VALUES ($1, $2, $3)",
+        id,
+        name,
+        kind
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| map_write(&e, &ctx))?;
+    let row = continent_by_id(&mut tx, &id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    tx.commit().await.map_err(|e| map_write(&e, &ctx))?;
+    Ok(created(
+        format!("/api/v1/continents/{id}"),
+        &One {
+            data: Continent::from(row),
+        },
+    ))
+}
+
+/// `PATCH /continents/{continent_id}`.
+pub async fn update_continent(
+    req: HttpRequest,
+    path: web::Path<String>,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let id = path.into_inner();
+    if !is_slug(&id) {
+        return Err(ApiError::not_found(Resource::Continent, &id));
+    }
+    let mut tx = begin_write(&pool).await?;
+    let Some(stored) = sqlx::query_scalar!(
+        "SELECT type FROM continents WHERE id = $1 FOR NO KEY UPDATE",
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Err(ApiError::not_found(Resource::Continent, &id));
+    };
+    let mut o = Obj::new(body)?;
+    o.forbid("id", ID_IMMUTABLE);
+    o.require_some_field();
+    let name = o.patch("name", input::name);
+    let kind = o.patch("type", one_of(CONTINENT_TYPES));
+    if stored == "modern" && matches!(kind, Some(Some("prehistoric"))) {
+        let linked = continent_countries(&mut tx, &id).await?;
+        if let Some(first) = linked.first() {
+            let ids: Vec<&str> = linked.iter().map(|r| r.id.as_str()).collect();
+            o.push(
+                "type",
+                format!(
+                    "type cannot change to prehistoric: {} {} linked to this continent ({}). \
+                     Only modern continents contain countries; move them first.",
+                    first.total,
+                    if first.total == 1 {
+                        "country is"
+                    } else {
+                        "countries are"
+                    },
+                    ids.join(", ")
+                ),
+            );
+        }
+    }
+    o.finish()?;
+    let name = name.flatten();
+    let ctx = Ctx::new(Resource::Continent, &id, Op::ContinentUpdate).name(name.as_deref());
+    sqlx::query!(
+        "UPDATE continents SET name = COALESCE($2, name), type = COALESCE($3, type) WHERE id = $1",
+        id,
+        name,
+        kind.flatten()
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| map_write(&e, &ctx))?;
+    let row = continent_by_id(&mut tx, &id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    tx.commit().await.map_err(|e| map_write(&e, &ctx))?;
+    Ok(updated(&One {
+        data: Continent::from(row),
+    }))
+}
+
+/// `DELETE /continents/{continent_id}`.
+pub async fn delete_continent(
+    req: HttpRequest,
+    path: web::Path<String>,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let id = path.into_inner();
+    delete_resource(
+        &req,
+        gate.get_ref(),
+        &pool,
+        Resource::Continent,
+        &id,
+        async |c: &mut PgConnection| {
+            Ok(sqlx::query!(
+                "SELECT 1 AS one FROM continents WHERE id = $1 FOR UPDATE",
+                id
+            )
+            .fetch_optional(c)
+            .await?
+            .is_some())
+        },
+        async |c: &mut PgConnection| {
+            sqlx::query!("DELETE FROM continents WHERE id = $1", id)
+                .execute(c)
+                .await
+                .map(|_| ())
+        },
+    )
+    .await
+}
+
+#[derive(Debug)]
+struct ContinentKindRow {
+    id: String,
+    kind: String,
+}
+
+fixed_query! {
+    /// Q-W4: referenced continents and their type.
+    pub const CONTINENT_KINDS_SQL = "SELECT c.id, c.type AS kind FROM continents c WHERE c.id = ANY($1::text[])";
+    fn continent_kinds(ids: &[String]) -> fetch_all ContinentKindRow;
+}
+
+/// `continent_ids` must name existing modern continents (spec §5.5).
+async fn check_country_continents(
+    conn: &mut PgConnection,
+    o: &mut Obj,
+    ids: &[String],
+) -> sqlx::Result<()> {
+    let found = continent_kinds(conn, ids).await?;
+    let unknown: Vec<&str> = ids
+        .iter()
+        .filter(|id| !found.iter().any(|f| &f.id == *id))
+        .map(String::as_str)
+        .collect();
+    if !unknown.is_empty() {
+        o.push(
+            "continent_ids",
+            format!(
+                "continent_ids lists continents that do not exist: {}.",
+                unknown.join(", ")
+            ),
+        );
+    }
+    let prehistoric: Vec<&str> = ids
+        .iter()
+        .filter(|id| found.iter().any(|f| &f.id == *id && f.kind != "modern"))
+        .map(String::as_str)
+        .collect();
+    if !prehistoric.is_empty() {
+        o.push(
+            "continent_ids",
+            format!(
+                "continent_ids lists prehistoric continents: {}. Countries belong only to modern continents.",
+                prehistoric.join(", ")
+            ),
+        );
+    }
+    Ok(())
+}
+
+/// Q-W12: replaces the continent links of a country.
+async fn replace_country_continents(
+    conn: &mut PgConnection,
+    id: &str,
+    continent_ids: &[String],
+) -> sqlx::Result<()> {
+    sqlx::query!(
+        "DELETE FROM country_continents WHERE country_id = $1 AND continent_id <> ALL($2::text[])",
+        id,
+        continent_ids
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        "INSERT INTO country_continents (country_id, continent_id) \
+         SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING",
+        id,
+        continent_ids
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// `POST /countries`.
+pub async fn create_country(
+    req: HttpRequest,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let mut tx = begin_write(&pool).await?;
+    let mut o = Obj::new(body)?;
+    let id = o.required("id", slug);
+    let name = o.required("name", input::name);
+    let continent_ids = o.required("continent_ids", slug_list(1, 10));
+    if let Some(ids) = &continent_ids {
+        check_country_continents(&mut tx, &mut o, ids).await?;
+    }
+    o.finish()?;
+    let (Some(id), Some(name), Some(continent_ids)) = (id, name, continent_ids) else {
+        return Err(ApiError::internal());
+    };
+    let ctx = Ctx::new(Resource::Country, &id, Op::Insert).name(Some(&name));
+    sqlx::query!("INSERT INTO countries (id, name) VALUES ($1, $2)", id, name)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| map_write(&e, &ctx))?;
+    replace_country_continents(&mut tx, &id, &continent_ids)
+        .await
+        .map_err(|e| map_write(&e, &ctx))?;
+    let country = load_country(&mut tx, &id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    tx.commit().await.map_err(|e| map_write(&e, &ctx))?;
+    Ok(created(
+        format!("/api/v1/countries/{id}"),
+        &One { data: country },
+    ))
+}
+
+/// `PATCH /countries/{country_id}`.
+pub async fn update_country(
+    req: HttpRequest,
+    path: web::Path<String>,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let id = path.into_inner();
+    if !is_slug(&id) {
+        return Err(ApiError::not_found(Resource::Country, &id));
+    }
+    let mut tx = begin_write(&pool).await?;
+    let locked = sqlx::query_scalar!(
+        "SELECT id FROM countries WHERE id = $1 FOR NO KEY UPDATE",
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if locked.is_none() {
+        return Err(ApiError::not_found(Resource::Country, &id));
+    }
+    let mut o = Obj::new(body)?;
+    o.forbid("id", ID_IMMUTABLE);
+    o.require_some_field();
+    let name = o.patch("name", input::name);
+    let continent_ids = o.patch("continent_ids", slug_list(1, 10));
+    if let Some(Some(ids)) = &continent_ids {
+        check_country_continents(&mut tx, &mut o, ids).await?;
+    }
+    o.finish()?;
+    let name = name.flatten();
+    let ctx = Ctx::new(Resource::Country, &id, Op::Update).name(name.as_deref());
+    if name.is_some() {
+        sqlx::query!("UPDATE countries SET name = $2 WHERE id = $1", id, name)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| map_write(&e, &ctx))?;
+    }
+    if let Some(ids) = continent_ids.flatten() {
+        replace_country_continents(&mut tx, &id, &ids)
+            .await
+            .map_err(|e| map_write(&e, &ctx))?;
+    }
+    let country = load_country(&mut tx, &id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    tx.commit().await.map_err(|e| map_write(&e, &ctx))?;
+    Ok(updated(&One { data: country }))
+}
+
+/// `DELETE /countries/{country_id}`: its continent links go with it.
+pub async fn delete_country(
+    req: HttpRequest,
+    path: web::Path<String>,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let id = path.into_inner();
+    delete_resource(
+        &req,
+        gate.get_ref(),
+        &pool,
+        Resource::Country,
+        &id,
+        async |c: &mut PgConnection| {
+            Ok(sqlx::query!(
+                "SELECT 1 AS one FROM countries WHERE id = $1 FOR UPDATE",
+                id
+            )
+            .fetch_optional(c)
+            .await?
+            .is_some())
+        },
+        async |c: &mut PgConnection| {
+            sqlx::query!("DELETE FROM countries WHERE id = $1", id)
+                .execute(c)
+                .await
+                .map(|_| ())
+        },
+    )
+    .await
 }

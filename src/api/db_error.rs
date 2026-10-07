@@ -370,8 +370,8 @@ impl From<sqlx::Error> for ApiError {
 
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct DependentRow {
-    id: String,
-    total: i64,
+    pub(crate) id: String,
+    pub(crate) total: i64,
 }
 
 fixed_query! {
