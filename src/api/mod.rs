@@ -50,10 +50,16 @@ use self::auth::AdminGate;
 use self::error::{ApiError, no_store_on_get_errors};
 
 /// Every path under `/api/v1` and the methods it answers (OpenAPI drift test).
-pub const ROUTES: &[(&str, &[Method])] = &[];
+pub const ROUTES: &[(&str, &[Method])] = &[
+    ("/species", &[Method::GET]),
+    ("/species/{species_id}", &[Method::GET]),
+];
 
 /// Registers every resource under `/api/v1`.
-fn routes(_cfg: &mut web::ServiceConfig) {}
+fn routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(web::resource("/species").route(web::get().to(species::list)))
+        .service(web::resource("/species/{species_id}").route(web::get().to(species::detail)));
+}
 
 /// Builds the application: routes, CORS headers, `OPTIONS`, `404`/`405` envelopes
 /// (plan §Request pipeline).
