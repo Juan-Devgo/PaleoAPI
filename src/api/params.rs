@@ -2,9 +2,11 @@
 
 use std::collections::HashMap;
 
+use actix_web::web;
 use serde::Serialize;
 
 use super::error::ApiError;
+use super::input::{is_slug, truncate};
 
 /// `page` and `limit` (spec §4.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,53 +63,154 @@ pub struct Params {
     values: HashMap<&'static str, String>,
 }
 
+/// Longest echoed query value.
+const ECHO: usize = 32;
+
+fn echo(v: &str) -> String {
+    truncate(v, ECHO)
+}
+
 impl Params {
     /// Parses `query`, keeping only `known` keys; a repeated known key → `400`.
-    pub fn parse(_query: &str, _known: &[&'static str]) -> Result<Self, ApiError> {
-        todo!()
+    pub fn parse(query: &str, known: &[&'static str]) -> Result<Self, ApiError> {
+        let pairs = web::Query::<Vec<(String, String)>>::from_query(query)
+            .map_err(|_| {
+                ApiError::invalid_query(
+                    "The query string is malformed. Use key=value pairs separated by '&'.".into(),
+                )
+            })?
+            .into_inner();
+        let mut values = HashMap::new();
+        for (key, value) in pairs {
+            let Some(&k) = known.iter().find(|k| **k == key) else {
+                continue;
+            };
+            if values.insert(k, value).is_some() {
+                return Err(ApiError::invalid_query(format!(
+                    "Query parameter '{k}' is repeated. Send it at most once."
+                )));
+            }
+        }
+        Ok(Self { values })
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
         self.values.get(key).map(String::as_str)
     }
 
+    fn uint(&self, key: &str, default: u32, max: u32) -> Result<u32, ApiError> {
+        let Some(v) = self.get(key) else {
+            return Ok(default);
+        };
+        let err = || {
+            ApiError::invalid_query(format!(
+                "{key} must be an integer from 1 to {max} (got '{}').",
+                echo(v)
+            ))
+        };
+        if v.is_empty() || v.len() > 10 || !v.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(err());
+        }
+        match v.parse::<u32>() {
+            Ok(n) if (1..=max).contains(&n) => Ok(n),
+            _ => Err(err()),
+        }
+    }
+
     /// `page` and `limit`, with defaults `1` and `20`.
     pub fn page(&self) -> Result<Page, ApiError> {
-        todo!()
+        Ok(Page {
+            page: self.uint("page", 1, 1_000_000)?,
+            limit: self.uint("limit", 20, 100)?,
+        })
     }
 
     /// `sort=<field>` or `sort=-<field>` from `allowed`.
     pub fn sort<S: Copy>(
         &self,
-        _allowed: &[(&'static str, S)],
-        _default: Sort<S>,
+        allowed: &[(&'static str, S)],
+        default: Sort<S>,
     ) -> Result<Sort<S>, ApiError> {
-        todo!()
+        let Some(v) = self.get("sort") else {
+            return Ok(default);
+        };
+        let (field, desc) = match v.strip_prefix('-') {
+            Some(rest) => (rest, true),
+            None => (v, false),
+        };
+        match allowed.iter().find(|(name, _)| *name == field) {
+            Some(&(_, key)) => Ok(Sort { key, desc }),
+            None => {
+                let list: Vec<String> = allowed
+                    .iter()
+                    .flat_map(|(name, _)| [name.to_string(), format!("-{name}")])
+                    .collect();
+                Err(ApiError::invalid_query(format!(
+                    "sort '{}' is not supported. Use one of: {}.",
+                    echo(v),
+                    list.join(", ")
+                )))
+            }
+        }
     }
 
     /// A slug filter.
-    pub fn slug(&self, _key: &'static str) -> Result<Option<String>, ApiError> {
-        todo!()
+    pub fn slug(&self, key: &'static str) -> Result<Option<String>, ApiError> {
+        match self.get(key) {
+            None => Ok(None),
+            Some(v) if is_slug(v) => Ok(Some(v.to_string())),
+            Some(v) => Err(ApiError::invalid_query(format!(
+                "{key} must be an id: 2–64 lowercase letters, digits, or single hyphens (got '{}').",
+                echo(v)
+            ))),
+        }
     }
 
     /// An enum filter.
     pub fn one_of(
         &self,
-        _key: &'static str,
-        _allowed: &'static [&'static str],
+        key: &'static str,
+        allowed: &'static [&'static str],
     ) -> Result<Option<&'static str>, ApiError> {
-        todo!()
+        match self.get(key) {
+            None => Ok(None),
+            Some(v) => match allowed.iter().find(|a| **a == v) {
+                Some(a) => Ok(Some(a)),
+                None => Err(ApiError::invalid_query(format!(
+                    "{key} must be one of: {} (got '{}').",
+                    allowed.join(", "),
+                    echo(v)
+                ))),
+            },
+        }
     }
 
     /// `q`: trimmed, 3–64 characters, returned as an escaped `ILIKE` pattern `%…%`.
     pub fn q(&self) -> Result<Option<String>, ApiError> {
-        todo!()
+        let Some(v) = self.get("q") else {
+            return Ok(None);
+        };
+        let term = v.trim();
+        let n = term.chars().count();
+        if !(3..=64).contains(&n) {
+            return Err(ApiError::invalid_query(format!(
+                "q must be 3–64 characters after trimming spaces (got {n})."
+            )));
+        }
+        Ok(Some(format!("%{}%", escape_like(term))))
     }
 }
 
 /// Escapes `\`, `%`, `_` for `LIKE … ESCAPE '\'`.
-pub fn escape_like(_s: &str) -> String {
-    todo!()
+pub fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 #[cfg(test)]
