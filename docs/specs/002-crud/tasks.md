@@ -3,7 +3,7 @@
 ## Phase 1: Setup
 
 - [X] T001 Add `bigdecimal`, `serde_json` `arbitrary_precision`, and sqlx `bigdecimal` feature (plan §Technical Context) in `Cargo.toml`
-- [ ] T002 [P] Write guards (plan §Cases `repo_hygiene.rs`) in `tests/repo_hygiene.rs`
+- [X] T002 [P] Write guards (plan §Cases `repo_hygiene.rs`) in `tests/repo_hygiene.rs`
 - [ ] T003 Add `SQLX_OFFLINE=true` with comment (research R3) in `.env.example`
 - [ ] T004 [P] Add `cargo sqlx prepare -- --all-targets` to §3 and the `--check` gate to §5 in `AGENTS.md`
 
