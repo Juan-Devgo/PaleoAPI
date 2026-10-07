@@ -30,8 +30,8 @@
 
 ## Phase 3: US1 + US3 — Paginated species cards (MVP)
 
-- [ ] T023 [P] [US1] Write species read tests (plan §Cases `species.rs` reads) in `tests/api/species.rs`
-- [ ] T024 [P] [US3] Write list, caching, and `405` tests (plan §Cases `global.rs` reads) in `tests/api/global.rs`
+- [X] T023 [P] [US1] Write species read tests (plan §Cases `species.rs` reads) in `tests/api/species.rs`
+- [X] T024 [P] [US3] Write list, caching, and `405` tests (plan §Cases `global.rs` reads) in `tests/api/global.rs`
 - [ ] T025 [P] [US1] Implement `SpeciesCard`, batched Q-S12 embeddings and their `*_SQL` constants (plan §Read path Embedding, §Project Structure; data-model §1; research R8), then run `cargo sqlx prepare -- --all-targets`, in `src/api/species/card.rs`, `.sqlx/`
 - [ ] T026 [P] [US3] Implement sorts Q-S1…Q-S3, `push_page_sql`, `push_count_sql`, count-first paging (plan §Read path) in `src/api/species/list.rs`
 - [ ] T027 [US1] Implement `GET /species` and `GET /species/{species_id}` (Q-S13 with `*_SQL` constant), then run `cargo sqlx prepare -- --all-targets`, in `src/api/species/mod.rs`, `.sqlx/`

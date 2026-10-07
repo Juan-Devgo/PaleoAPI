@@ -228,3 +228,62 @@ pub fn etag(resp: &Resp) -> String {
         .unwrap_or_else(|| panic!("no ETag on {}", resp.status))
         .to_string()
 }
+
+// ---------------------------------------------------------------- seeders
+
+/// One era, one period, and one genus chain to hang species on: `(genus, period)`.
+pub async fn seed_base(pool: &PgPool, prefix: &str) -> (String, String) {
+    let era_id = format!("{prefix}-era");
+    let period_id = format!("{prefix}-period");
+    era(pool, &era_id, "251.902", "66").await.unwrap();
+    period(pool, &period_id, &era_id, "201.4", "145")
+        .await
+        .unwrap();
+    let genus_id = genus_chain(pool, prefix).await;
+    (genus_id, period_id)
+}
+
+/// Inserts a species with explicit `name`, `scientific_name`, and `discovery_year`.
+pub async fn species_row(
+    pool: &PgPool,
+    id: &str,
+    genus_id: &str,
+    period_id: &str,
+    name: &str,
+    scientific_name: &str,
+    discovery_year: Option<i32>,
+) {
+    sqlx::query(
+        "WITH s AS ( \
+           INSERT INTO species (id, genus_id, name, scientific_name, diet, description, discovery_year) \
+           VALUES ($1, $2, $3, $4, 'carnivore', 'A test species.', $5) RETURNING id) \
+         INSERT INTO species_periods (species_id, period_id) SELECT id, $6 FROM s",
+    )
+    .bind(id)
+    .bind(genus_id)
+    .bind(name)
+    .bind(scientific_name)
+    .bind(discovery_year)
+    .bind(period_id)
+    .execute(pool)
+    .await
+    .unwrap_or_else(|e| panic!("seed species {id}: {e}"));
+}
+
+/// `data[*].id` of a list response.
+#[track_caller]
+pub fn ids(resp: &Resp) -> Vec<String> {
+    assert_eq!(resp.status.as_u16(), 200, "{}", resp.text());
+    resp.json()["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no data list: {}", resp.text()))
+        .iter()
+        .map(|d| d["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// The `pagination` object of a list response.
+#[track_caller]
+pub fn pagination(resp: &Resp) -> Value {
+    resp.json()["pagination"].clone()
+}
