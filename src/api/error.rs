@@ -228,9 +228,9 @@ impl ApiError {
     pub fn validation(details: Vec<FieldError>) -> Self {
         let n = details.len();
         let message = if n == 1 {
-            "The request body has 1 invalid field. See details.".to_string()
+            "The request body has 1 invalid field.".to_string()
         } else {
-            format!("The request body has {n} invalid fields. See details.")
+            format!("The request body has {n} invalid fields.")
         };
         Self {
             details,

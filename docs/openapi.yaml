@@ -1,0 +1,846 @@
+openapi: 3.1.1
+info:
+  title: PaleoAPI
+  version: 1.0.0
+  license: { name: See LICENSE in the repository }
+  # Decimals bullet: spec §4.13 (places, trailing zeros, normalized output, 10^15 / 40-character bound).
+  description: |
+    Public REST API with data about prehistoric species, geologic time, taxonomy, and geography.
+
+    - **Reads** (`GET`) are public. Every response allows any origin (`Access-Control-Allow-Origin: *`) and exposes `ETag`.
+      `OPTIONS` preflight requests succeed on every path.
+    - **Caching:** successful `GET` responses carry `ETag` and `Cache-Control: public, max-age=300`. Send `If-None-Match`
+      to get `304 Not Modified`. Error responses to `GET` carry `Cache-Control: no-store`.
+    - **Writes** (`POST`, `PATCH`, `DELETE`) require an admin. Admin sign-in is defined by a later release; until then
+      every write returns `401 UNAUTHORIZED`.
+    - **Write bodies** are `application/json` objects of at most 64 KB. Unknown fields are rejected. `PATCH` changes only
+      the fields sent; `null` clears an optional field; list and `size` values replace the stored value.
+    - **When several problems apply**, the first of these wins: 404 unknown route / 405 method; 401/403; 413/415/400 body;
+      404 unknown resource in the path; 422 validation (all problems listed in `details`); 409 conflict.
+    - **Lists:** `page` (1–1,000,000, default 1), `limit` (1–100, default 20), `sort=<field>` or `sort=-<field>`; ties are
+      ordered by `id`. Filters combine with AND. Repeating a known parameter returns 400; unknown parameters are ignored.
+    - **Ids** are slugs chosen on create (2–64 of `a-z`, `0-9`, single inner hyphens) and never change. A path id that is
+      not a slug returns the resource's 404.
+    - **Decimals** are JSON numbers, never rounded: more decimal places than allowed returns 422. Trailing zeros are not
+      significant and are not stored (`66.0` is returned as `66`). The absolute value must be below 10^15 and the
+      number text at most 40 characters; otherwise 422.
+    - Unsupported methods return `405 METHOD_NOT_ALLOWED` with an `Allow` header.
+servers:
+  - url: /api/v1
+tags:
+  - { name: geologic-time, description: Eras and periods. }
+  - { name: taxonomy, description: 'Domain → kingdom → phylum → class → order → family → genus.' }
+  - { name: geography, description: Continents and countries. }
+  - { name: species }
+
+paths:
+  # ---------------------------------------------------------------- geologic time
+  /eras:
+    get:
+      operationId: listEras
+      tags: [geologic-time]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortTime' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/EraPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createEra
+      tags: [geologic-time]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EraCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/EraEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /eras/{era_id}:
+    parameters: [{ $ref: '#/components/parameters/era_id' }]
+    get:
+      operationId: getEra
+      tags: [geologic-time]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/EraOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updateEra
+      tags: [geologic-time]
+      security: [{ adminBearer: [] }]
+      description: The resulting range must not overlap another era and must still contain all of the era's periods.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EraPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/EraEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deleteEra
+      tags: [geologic-time]
+      security: [{ adminBearer: [] }]
+      description: 409 ERA_HAS_DEPENDENTS while the era has periods.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /eras/{era_id}/periods:
+    parameters: [{ $ref: '#/components/parameters/era_id' }]
+    get:
+      operationId: listEraPeriods
+      tags: [geologic-time]
+      description: 404 ERA_NOT_FOUND if the era does not exist.
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortTime' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/PeriodPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createEraPeriod
+      tags: [geologic-time]
+      security: [{ adminBearer: [] }]
+      description: Creates a period in this era. Sending `era_id` in the body returns 422. `Location` is `/api/v1/periods/{period_id}`.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PeriodCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/PeriodEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /periods:
+    get:
+      operationId: listPeriods
+      tags: [geologic-time]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortTime' }, { $ref: '#/components/parameters/filterEra' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/PeriodPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /periods/{period_id}:
+    parameters: [{ $ref: '#/components/parameters/period_id' }]
+    get:
+      operationId: getPeriod
+      tags: [geologic-time]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/PeriodOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updatePeriod
+      tags: [geologic-time]
+      security: [{ adminBearer: [] }]
+      description: May move the period to another era (`era_id`), together with its range. Rules are checked on the result.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PeriodPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/PeriodEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deletePeriod
+      tags: [geologic-time]
+      security: [{ adminBearer: [] }]
+      description: 409 PERIOD_HAS_DEPENDENTS while any species is linked to the period.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+
+  # ---------------------------------------------------------------- taxonomy
+  /taxonomy/domains:
+    get:
+      operationId: listDomains
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/DomainPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createDomain
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TaxonCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/DomainEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/domains/{domain_id}:
+    parameters: [{ $ref: '#/components/parameters/domain_id' }]
+    get:
+      operationId: getDomain
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/DomainOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updateDomain
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DomainPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/DomainEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deleteDomain
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: 409 DOMAIN_HAS_DEPENDENTS while the domain has kingdoms.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/domains/{domain_id}/kingdoms:
+    parameters: [{ $ref: '#/components/parameters/domain_id' }]
+    get:
+      operationId: listDomainKingdoms
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/KingdomPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createDomainKingdom
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: Sending `domain_id` in the body returns 422. `Location` is `/api/v1/taxonomy/kingdoms/{kingdom_id}`.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TaxonCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/KingdomEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/kingdoms:
+    get:
+      operationId: listKingdoms
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/filterDomain' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/KingdomPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/kingdoms/{kingdom_id}:
+    parameters: [{ $ref: '#/components/parameters/kingdom_id' }]
+    get:
+      operationId: getKingdom
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/KingdomOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updateKingdom
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/KingdomPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/KingdomEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deleteKingdom
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: 409 KINGDOM_HAS_DEPENDENTS while the kingdom has phyla.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/kingdoms/{kingdom_id}/phyla:
+    parameters: [{ $ref: '#/components/parameters/kingdom_id' }]
+    get:
+      operationId: listKingdomPhyla
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/PhylumPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createKingdomPhylum
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: Sending `kingdom_id` in the body returns 422. `Location` is `/api/v1/taxonomy/phyla/{phylum_id}`.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TaxonCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/PhylumEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/phyla:
+    get:
+      operationId: listPhyla
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/filterKingdom' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/PhylumPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/phyla/{phylum_id}:
+    parameters: [{ $ref: '#/components/parameters/phylum_id' }]
+    get:
+      operationId: getPhylum
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/PhylumOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updatePhylum
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PhylumPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/PhylumEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deletePhylum
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: 409 PHYLUM_HAS_DEPENDENTS while the phylum has classes.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/phyla/{phylum_id}/classes:
+    parameters: [{ $ref: '#/components/parameters/phylum_id' }]
+    get:
+      operationId: listPhylumClasses
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/ClassPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createPhylumClass
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: Sending `phylum_id` in the body returns 422. `Location` is `/api/v1/taxonomy/classes/{class_id}`.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TaxonCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/ClassEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/classes:
+    get:
+      operationId: listClasses
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/filterPhylum' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/ClassPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/classes/{class_id}:
+    parameters: [{ $ref: '#/components/parameters/class_id' }]
+    get:
+      operationId: getClass
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/ClassOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updateClass
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ClassPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/ClassEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deleteClass
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: 409 CLASS_HAS_DEPENDENTS while the class has orders.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/classes/{class_id}/orders:
+    parameters: [{ $ref: '#/components/parameters/class_id' }]
+    get:
+      operationId: listClassOrders
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/OrderPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createClassOrder
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: Sending `class_id` in the body returns 422. `Location` is `/api/v1/taxonomy/orders/{order_id}`.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TaxonCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/OrderEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/orders:
+    get:
+      operationId: listOrders
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/filterClass' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/OrderPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/orders/{order_id}:
+    parameters: [{ $ref: '#/components/parameters/order_id' }]
+    get:
+      operationId: getOrder
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/OrderOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updateOrder
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OrderPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/OrderEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deleteOrder
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: 409 ORDER_HAS_DEPENDENTS while the order has families.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/orders/{order_id}/families:
+    parameters: [{ $ref: '#/components/parameters/order_id' }]
+    get:
+      operationId: listOrderFamilies
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/FamilyPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createOrderFamily
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: Sending `order_id` in the body returns 422. `Location` is `/api/v1/taxonomy/families/{family_id}`.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TaxonCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/FamilyEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/families:
+    get:
+      operationId: listFamilies
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/filterOrder' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/FamilyPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/families/{family_id}:
+    parameters: [{ $ref: '#/components/parameters/family_id' }]
+    get:
+      operationId: getFamily
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/FamilyOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updateFamily
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FamilyPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/FamilyEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deleteFamily
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: 409 FAMILY_HAS_DEPENDENTS while the family has genera.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/families/{family_id}/genera:
+    parameters: [{ $ref: '#/components/parameters/family_id' }]
+    get:
+      operationId: listFamilyGenera
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/GenusPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createFamilyGenus
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: Sending `family_id` in the body returns 422. `Location` is `/api/v1/taxonomy/genera/{genus_id}`.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TaxonCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/GenusEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/genera:
+    get:
+      operationId: listGenera
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/filterFamily' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/GenusPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /taxonomy/genera/{genus_id}:
+    parameters: [{ $ref: '#/components/parameters/genus_id' }]
+    get:
+      operationId: getGenus
+      tags: [taxonomy]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/GenusOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updateGenus
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: Reparenting a genus changes the `taxonomy` of its species.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GenusPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/GenusEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deleteGenus
+      tags: [taxonomy]
+      security: [{ adminBearer: [] }]
+      description: 409 GENUS_HAS_DEPENDENTS while the genus has species.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+
+  # ---------------------------------------------------------------- geography
+  /continents:
+    get:
+      operationId: listContinents
+      tags: [geography]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/filterType' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/ContinentPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createContinent
+      tags: [geography]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ContinentCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/ContinentEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /continents/{continent_id}:
+    parameters: [{ $ref: '#/components/parameters/continent_id' }]
+    get:
+      operationId: getContinent
+      tags: [geography]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/ContinentOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updateContinent
+      tags: [geography]
+      security: [{ adminBearer: [] }]
+      description: Changing `type` from `modern` to `prehistoric` while countries are linked returns 422.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ContinentPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/ContinentEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deleteContinent
+      tags: [geography]
+      security: [{ adminBearer: [] }]
+      description: 409 CONTINENT_HAS_DEPENDENTS while any country or species is linked to the continent.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /continents/{continent_id}/countries:
+    parameters: [{ $ref: '#/components/parameters/continent_id' }]
+    get:
+      operationId: listContinentCountries
+      tags: [geography]
+      description: Empty for a prehistoric continent. 404 CONTINENT_NOT_FOUND if the continent does not exist.
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/CountryPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /countries:
+    get:
+      operationId: listCountries
+      tags: [geography]
+      parameters: [{ $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/limit' }, { $ref: '#/components/parameters/sortName' }, { $ref: '#/components/parameters/filterContinent' }, { $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/CountryPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createCountry
+      tags: [geography]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CountryCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/CountryEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /countries/{country_id}:
+    parameters: [{ $ref: '#/components/parameters/country_id' }]
+    get:
+      operationId: getCountry
+      tags: [geography]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/CountryOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updateCountry
+      tags: [geography]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CountryPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/CountryEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deleteCountry
+      tags: [geography]
+      security: [{ adminBearer: [] }]
+      description: 409 COUNTRY_HAS_DEPENDENTS while any species is linked to the country. Otherwise also removes its continent links.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+
+  # ---------------------------------------------------------------- species
+  /species:
+    get:
+      operationId: listSpecies
+      tags: [species]
+      parameters:
+        - { $ref: '#/components/parameters/page' }
+        - { $ref: '#/components/parameters/limit' }
+        - { $ref: '#/components/parameters/sortSpecies' }
+        - { name: diet, in: query, schema: { $ref: '#/components/schemas/Diet' } }
+        - { $ref: '#/components/parameters/filterEra' }
+        - { name: period, in: query, description: Species linked to this period., schema: { $ref: '#/components/schemas/Slug' } }
+        - { $ref: '#/components/parameters/filterDomain' }
+        - { $ref: '#/components/parameters/filterKingdom' }
+        - { $ref: '#/components/parameters/filterPhylum' }
+        - { $ref: '#/components/parameters/filterClass' }
+        - { $ref: '#/components/parameters/filterOrder' }
+        - { $ref: '#/components/parameters/filterFamily' }
+        - { name: genus, in: query, description: Species of this genus., schema: { $ref: '#/components/schemas/Slug' } }
+        - { $ref: '#/components/parameters/filterContinent' }
+        - { name: country, in: query, description: Species whose fossils were found in this country., schema: { $ref: '#/components/schemas/Slug' } }
+        - { name: q, in: query, description: 'Case-insensitive substring of `name` or `scientific_name`; 3–64 characters after trimming; `%` and `_` match literally.', schema: { type: string, minLength: 3, maxLength: 64 }, example: rex }
+        - { $ref: '#/components/parameters/IfNoneMatch' }
+      responses: { '200': { $ref: '#/components/responses/SpeciesPage' }, '304': { $ref: '#/components/responses/NotModified' }, '400': { $ref: '#/components/responses/BadRequest' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    post:
+      operationId: createSpecies
+      tags: [species]
+      security: [{ adminBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SpeciesCreate' } } } }
+      responses: { '201': { description: Created., headers: { Location: { $ref: '#/components/headers/Location' } }, content: { application/json: { schema: { $ref: '#/components/schemas/SpeciesEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+  /species/{species_id}:
+    parameters: [{ $ref: '#/components/parameters/species_id' }]
+    get:
+      operationId: getSpecies
+      tags: [species]
+      parameters: [{ $ref: '#/components/parameters/IfNoneMatch' }]
+      responses: { '200': { $ref: '#/components/responses/SpeciesOne' }, '304': { $ref: '#/components/responses/NotModified' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    patch:
+      operationId: updateSpecies
+      tags: [species]
+      security: [{ adminBearer: [] }]
+      description: List fields and `size` replace the stored value. `period_ids` must keep at least one item.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SpeciesPatch' } } } }
+      responses: { '200': { description: Updated., content: { application/json: { schema: { $ref: '#/components/schemas/SpeciesEnvelope' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+    delete:
+      operationId: deleteSpecies
+      tags: [species]
+      security: [{ adminBearer: [] }]
+      description: Always allowed; removes the species with its size and links.
+      responses: { '204': { $ref: '#/components/responses/Deleted' }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { $ref: '#/components/responses/NotFound' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '500': { $ref: '#/components/responses/InternalError' } }
+
+components:
+  securitySchemes:
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Admin token, issued by the security release. Until then no token is accepted and every write returns 401.
+
+  parameters:
+    page: { name: page, in: query, description: '1-based page number. Past the last page returns empty `data`.', schema: { type: integer, minimum: 1, maximum: 1000000, default: 1 } }
+    limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    sortName: { name: sort, in: query, description: Case-insensitive. Ties are ordered by `id`., schema: { type: string, enum: [name, -name], default: name } }
+    sortTime: { name: sort, in: query, description: '`-start_mya` lists the oldest first. Ties are ordered by `id`.', schema: { type: string, enum: [start_mya, -start_mya, name, -name], default: -start_mya } }
+    sortSpecies: { name: sort, in: query, description: Species without `discovery_year` sort last in both directions. Ties are ordered by `id`., schema: { type: string, enum: [name, -name, scientific_name, -scientific_name, discovery_year, -discovery_year], default: name } }
+    IfNoneMatch: { name: If-None-Match, in: header, description: An `ETag` from a previous response; returns 304 when unchanged., schema: { type: string }, example: '"9f2c4a1be07d3c55"' }
+    filterEra: { name: era, in: query, schema: { $ref: '#/components/schemas/Slug' } }
+    filterDomain: { name: domain, in: query, schema: { $ref: '#/components/schemas/Slug' } }
+    filterKingdom: { name: kingdom, in: query, schema: { $ref: '#/components/schemas/Slug' } }
+    filterPhylum: { name: phylum, in: query, schema: { $ref: '#/components/schemas/Slug' } }
+    filterClass: { name: class, in: query, schema: { $ref: '#/components/schemas/Slug' } }
+    filterOrder: { name: order, in: query, schema: { $ref: '#/components/schemas/Slug' } }
+    filterFamily: { name: family, in: query, schema: { $ref: '#/components/schemas/Slug' } }
+    filterContinent: { name: continent, in: query, schema: { $ref: '#/components/schemas/Slug' } }
+    filterType: { name: type, in: query, schema: { $ref: '#/components/schemas/ContinentType' } }
+    era_id: { name: era_id, in: path, required: true, schema: { type: string }, example: mesozoic }
+    period_id: { name: period_id, in: path, required: true, schema: { type: string }, example: cretaceous }
+    domain_id: { name: domain_id, in: path, required: true, schema: { type: string }, example: eukaryota }
+    kingdom_id: { name: kingdom_id, in: path, required: true, schema: { type: string }, example: animalia }
+    phylum_id: { name: phylum_id, in: path, required: true, schema: { type: string }, example: chordata }
+    class_id: { name: class_id, in: path, required: true, schema: { type: string }, example: reptilia }
+    order_id: { name: order_id, in: path, required: true, schema: { type: string }, example: saurischia }
+    family_id: { name: family_id, in: path, required: true, schema: { type: string }, example: tyrannosauridae }
+    genus_id: { name: genus_id, in: path, required: true, schema: { type: string }, example: tyrannosaurus }
+    continent_id: { name: continent_id, in: path, required: true, schema: { type: string }, example: north-america }
+    country_id: { name: country_id, in: path, required: true, schema: { type: string }, example: usa }
+    species_id: { name: species_id, in: path, required: true, schema: { type: string }, example: tyrannosaurus-rex }
+
+  headers:
+    ETag: { description: Changes whenever the representation changes., schema: { type: string }, example: '"9f2c4a1be07d3c55"' }
+    CacheControl: { schema: { type: string, const: 'public, max-age=300' } }
+    Location: { description: Canonical path of the created resource., schema: { type: string }, example: /api/v1/species/tyrannosaurus-rex }
+    Allow: { description: Methods supported on the path., schema: { type: string }, example: 'GET, PATCH, DELETE' }
+
+  responses:
+    NotModified:
+      description: The representation matches `If-None-Match`. No body.
+      headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }
+    Deleted: { description: Deleted. No body. }
+    BadRequest:
+      description: Malformed JSON body, or an invalid query parameter (type, range, empty, repeated, unknown sort field, invalid filter value).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            query: { value: { error: { code: INVALID_QUERY_PARAMETER, message: "sort 'size' is not supported. Use one of: name, -name, scientific_name, -scientific_name, discovery_year, -discovery_year." } } }
+            json: { value: { error: { code: INVALID_JSON, message: 'The request body is not valid JSON (line 1, column 14). Check quotes, commas, and brackets.' } } }
+    Unauthorized:
+      description: Missing or invalid admin credentials.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: UNAUTHORIZED, message: 'This operation requires admin credentials. Send a valid admin token in the Authorization header.' } } } }
+    Forbidden:
+      description: Valid credentials without the admin role.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: FORBIDDEN, message: 'This operation requires the admin role.' } } } }
+    NotFound:
+      description: '`<RESOURCE>_NOT_FOUND` for an unknown or malformed id in the path (including the parent of a nested path), `ROUTE_NOT_FOUND` for an unknown path.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            resource: { value: { error: { code: SPECIES_NOT_FOUND, message: "No species found with id 'trex01'." } } }
+            route: { value: { error: { code: ROUTE_NOT_FOUND, message: "No route matches '/api/v1/specie'. See the API description for available paths." } } }
+    MethodNotAllowed:
+      description: Sent with a method this path does not support (spec §4.11, AC 6.1.15). The `Allow` header lists the supported methods.
+      headers: { Allow: { $ref: '#/components/headers/Allow' } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: METHOD_NOT_ALLOWED, message: "PUT is not supported on this path. Use one of: GET, PATCH, DELETE." } } } }
+    Conflict:
+      description: '`<RESOURCE>_ALREADY_EXISTS` for a duplicate id or name (names compared ignoring case); `<RESOURCE>_HAS_DEPENDENTS` when a delete is blocked.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            exists: { value: { error: { code: ERA_ALREADY_EXISTS, message: "An era named 'Mesozoic' already exists (names are compared ignoring case)." } } }
+            dependents: { value: { error: { code: ERA_HAS_DEPENDENTS, message: "Cannot delete era 'mesozoic': 3 periods depend on it (cretaceous, jurassic, triassic). Delete or reassign them first." } } }
+    PayloadTooLarge:
+      description: Request body larger than 64 KB (65,536 bytes).
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: PAYLOAD_TOO_LARGE, message: 'The request body is larger than 64 KB.' } } } }
+    UnsupportedMediaType:
+      description: The write body is not `application/json`.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: UNSUPPORTED_MEDIA_TYPE, message: 'Send the body as JSON with the header Content-Type: application/json.' } } } }
+    ValidationFailed:
+      description: Well-formed body that breaks validation or domain rules. `details` lists every problem.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ValidationError' } } }
+    InternalError:
+      description: Unexpected error. The message is generic.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: INTERNAL_ERROR, message: 'Something went wrong on our side. Try again later.' } } } }
+    EraOne: { description: The era., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/EraEnvelope' } } } }
+    EraPage: { description: A page of eras., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/EraPageEnvelope' } } } }
+    PeriodOne: { description: The period., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/PeriodEnvelope' } } } }
+    PeriodPage: { description: A page of periods., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/PeriodPageEnvelope' } } } }
+    DomainOne: { description: The domain., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/DomainEnvelope' } } } }
+    DomainPage: { description: A page of domains., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/DomainPageEnvelope' } } } }
+    KingdomOne: { description: The kingdom., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/KingdomEnvelope' } } } }
+    KingdomPage: { description: A page of kingdoms., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/KingdomPageEnvelope' } } } }
+    PhylumOne: { description: The phylum., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/PhylumEnvelope' } } } }
+    PhylumPage: { description: A page of phyla., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/PhylumPageEnvelope' } } } }
+    ClassOne: { description: The class., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/ClassEnvelope' } } } }
+    ClassPage: { description: A page of classes., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/ClassPageEnvelope' } } } }
+    OrderOne: { description: The order., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/OrderEnvelope' } } } }
+    OrderPage: { description: A page of orders., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/OrderPageEnvelope' } } } }
+    FamilyOne: { description: The family., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/FamilyEnvelope' } } } }
+    FamilyPage: { description: A page of families., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/FamilyPageEnvelope' } } } }
+    GenusOne: { description: The genus., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/GenusEnvelope' } } } }
+    GenusPage: { description: A page of genera., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/GenusPageEnvelope' } } } }
+    ContinentOne: { description: The continent., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/ContinentEnvelope' } } } }
+    ContinentPage: { description: A page of continents., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/ContinentPageEnvelope' } } } }
+    CountryOne: { description: The country., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/CountryEnvelope' } } } }
+    CountryPage: { description: A page of countries., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/CountryPageEnvelope' } } } }
+    SpeciesOne: { description: The species card., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/SpeciesEnvelope' } } } }
+    SpeciesPage: { description: A page of species cards., headers: { ETag: { $ref: '#/components/headers/ETag' }, Cache-Control: { $ref: '#/components/headers/CacheControl' } }, content: { application/json: { schema: { $ref: '#/components/schemas/SpeciesPageEnvelope' } } } }
+
+  schemas:
+    # ---- shared
+    Slug: { type: string, minLength: 2, maxLength: 64, pattern: '^[a-z0-9]+(-[a-z0-9]+)*$', example: tyrannosaurus-rex }
+    Name: { type: string, minLength: 1, maxLength: 64, description: Surrounding whitespace is trimmed before validation and storage. }
+    Mya: { type: number, minimum: 0, maximum: 4600, description: Millions of years ago; at most 3 decimal places. }
+    Summary: { type: object, required: [id, name], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string } } }
+    ContinentSummary: { type: object, required: [id, name, type], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, type: { $ref: '#/components/schemas/ContinentType' } } }
+    Pagination:
+      type: object
+      required: [page, limit, total_items, total_pages]
+      properties: { page: { type: integer }, limit: { type: integer }, total_items: { type: integer }, total_pages: { type: integer, description: 0 when total_items is 0. } }
+      example: { page: 1, limit: 20, total_items: 342, total_pages: 18 }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: object, required: [code, message], properties: { code: { type: string }, message: { type: string } } }
+    FieldError: { type: object, required: [field, message], properties: { field: { type: string, description: 'Body field (`size.length_m.min` for nested); `""` for the whole body.' }, message: { type: string } } }
+    ValidationError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          properties: { code: { const: VALIDATION_FAILED }, message: { type: string }, details: { type: array, minItems: 1, items: { $ref: '#/components/schemas/FieldError' } } }
+      example:
+        error:
+          code: VALIDATION_FAILED
+          message: The request body has 2 invalid fields.
+          details:
+            - { field: end_mya, message: 'end_mya (201.4) must be less than start_mya (145).' }
+            - { field: id, message: 'id must be 2–64 lowercase letters, digits, or hyphens.' }
+
+    # ---- geologic time
+    Era:
+      type: object
+      required: [id, name, start_mya, end_mya]
+      properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, start_mya: { type: number }, end_mya: { type: number } }
+      example: { id: mesozoic, name: Mesozoic, start_mya: 251.902, end_mya: 66 }
+    EraCreate:
+      type: object
+      additionalProperties: false
+      required: [id, name, start_mya, end_mya]
+      description: '`start_mya > end_mya`; must not overlap another era (touching boundaries allowed).'
+      properties: { id: { $ref: '#/components/schemas/Slug' }, name: { $ref: '#/components/schemas/Name' }, start_mya: { $ref: '#/components/schemas/Mya' }, end_mya: { $ref: '#/components/schemas/Mya' } }
+    EraPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' }, start_mya: { $ref: '#/components/schemas/Mya' }, end_mya: { $ref: '#/components/schemas/Mya' } } }
+    Period:
+      type: object
+      required: [id, name, start_mya, end_mya, era]
+      properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, start_mya: { type: number }, end_mya: { type: number }, era: { $ref: '#/components/schemas/Summary' } }
+      example: { id: cretaceous, name: Cretaceous, start_mya: 145, end_mya: 66, era: { id: mesozoic, name: Mesozoic } }
+    PeriodCreate:
+      type: object
+      additionalProperties: false
+      required: [id, name, start_mya, end_mya]
+      description: Lies within the era's range; must not overlap another period.
+      properties: { id: { $ref: '#/components/schemas/Slug' }, name: { $ref: '#/components/schemas/Name' }, start_mya: { $ref: '#/components/schemas/Mya' }, end_mya: { $ref: '#/components/schemas/Mya' } }
+    PeriodPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' }, start_mya: { $ref: '#/components/schemas/Mya' }, end_mya: { $ref: '#/components/schemas/Mya' }, era_id: { $ref: '#/components/schemas/Slug' } } }
+
+    # ---- taxonomy
+    TaxonCreate: { type: object, additionalProperties: false, required: [id, name], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { $ref: '#/components/schemas/Name' } }, example: { id: animalia, name: Animalia } }
+    Domain: { type: object, required: [id, name], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string } }, example: { id: eukaryota, name: Eukaryota } }
+    DomainPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' } } }
+    Kingdom: { type: object, required: [id, name, domain], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, domain: { $ref: '#/components/schemas/Summary' } }, example: { id: animalia, name: Animalia, domain: { id: eukaryota, name: Eukaryota } } }
+    KingdomPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' }, domain_id: { $ref: '#/components/schemas/Slug' } } }
+    Phylum: { type: object, required: [id, name, kingdom], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, kingdom: { $ref: '#/components/schemas/Summary' } } }
+    PhylumPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' }, kingdom_id: { $ref: '#/components/schemas/Slug' } } }
+    Class: { type: object, required: [id, name, phylum], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, phylum: { $ref: '#/components/schemas/Summary' } } }
+    ClassPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' }, phylum_id: { $ref: '#/components/schemas/Slug' } } }
+    Order: { type: object, required: [id, name, class], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, class: { $ref: '#/components/schemas/Summary' } } }
+    OrderPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' }, class_id: { $ref: '#/components/schemas/Slug' } } }
+    Family: { type: object, required: [id, name, order], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, order: { $ref: '#/components/schemas/Summary' } } }
+    FamilyPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' }, order_id: { $ref: '#/components/schemas/Slug' } } }
+    Genus: { type: object, required: [id, name, family], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, family: { $ref: '#/components/schemas/Summary' } }, example: { id: tyrannosaurus, name: Tyrannosaurus, family: { id: tyrannosauridae, name: Tyrannosauridae } } }
+    GenusPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' }, family_id: { $ref: '#/components/schemas/Slug' } } }
+
+    # ---- geography
+    ContinentType: { type: string, enum: [prehistoric, modern] }
+    Continent: { type: object, required: [id, name, type], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, type: { $ref: '#/components/schemas/ContinentType' } }, example: { id: laramidia, name: Laramidia, type: prehistoric } }
+    ContinentCreate: { type: object, additionalProperties: false, required: [id, name, type], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { $ref: '#/components/schemas/Name' }, type: { $ref: '#/components/schemas/ContinentType' } } }
+    ContinentPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' }, type: { $ref: '#/components/schemas/ContinentType' } } }
+    ContinentIds: { type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: { $ref: '#/components/schemas/Slug' }, description: Modern continents only. }
+    Country:
+      type: object
+      required: [id, name, continents]
+      properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, continents: { type: array, description: Sorted by name., items: { $ref: '#/components/schemas/ContinentSummary' } } }
+      example: { id: egypt, name: Egypt, continents: [{ id: africa, name: Africa, type: modern }, { id: asia, name: Asia, type: modern }] }
+    CountryCreate: { type: object, additionalProperties: false, required: [id, name, continent_ids], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { $ref: '#/components/schemas/Name' }, continent_ids: { $ref: '#/components/schemas/ContinentIds' } } }
+    CountryPatch: { type: object, additionalProperties: false, minProperties: 1, properties: { name: { $ref: '#/components/schemas/Name' }, continent_ids: { $ref: '#/components/schemas/ContinentIds' } } }
+
+    # ---- species
+    Diet: { type: string, enum: [carnivore, herbivore, omnivore, piscivore, insectivore] }
+    # Range bounds: spec §5.6 (places, min ≤ max) and §4.13 (10^15 / 40-character bound).
+    Range:
+      type: object
+      additionalProperties: false
+      required: [min, max]
+      description: Both bounds > 0 and below 10^15 (number text at most 40 characters), at most 6 decimal places, min ≤ max.
+      properties: { min: { type: number, exclusiveMinimum: 0 }, max: { type: number, exclusiveMinimum: 0 } }
+    SizeInput:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: 'At least one measure. A measure sent as null is the same as leaving it out. Send `"size": null` to remove all size data.'
+      properties: { length_m: { anyOf: [{ $ref: '#/components/schemas/Range' }, { type: 'null' }] }, height_m: { anyOf: [{ $ref: '#/components/schemas/Range' }, { type: 'null' }] }, weight_kg: { anyOf: [{ $ref: '#/components/schemas/Range' }, { type: 'null' }] } }
+    Size:
+      type: object
+      required: [length_m, height_m, weight_kg]
+      properties: { length_m: { anyOf: [{ $ref: '#/components/schemas/Range' }, { type: 'null' }] }, height_m: { anyOf: [{ $ref: '#/components/schemas/Range' }, { type: 'null' }] }, weight_kg: { anyOf: [{ $ref: '#/components/schemas/Range' }, { type: 'null' }] } }
+    SpeciesPeriod: { type: object, required: [id, name, era], properties: { id: { $ref: '#/components/schemas/Slug' }, name: { type: string }, era: { $ref: '#/components/schemas/Summary' } } }
+    Species:
+      type: object
+      required: [id, name, scientific_name, diet, description, discovery_year, image_url, size, taxonomy, periods, continents, countries]
+      properties:
+        id: { $ref: '#/components/schemas/Slug' }
+        name: { type: string, description: Common name; not unique. }
+        scientific_name: { type: string }
+        diet: { $ref: '#/components/schemas/Diet' }
+        description: { type: string }
+        discovery_year: { type: [integer, 'null'] }
+        image_url: { type: [string, 'null'] }
+        size: { anyOf: [{ $ref: '#/components/schemas/Size' }, { type: 'null' }] }
+        taxonomy:
+          type: object
+          description: Full lineage, derived from the genus.
+          required: [domain, kingdom, phylum, class, order, family, genus]
+          properties: { domain: { $ref: '#/components/schemas/Summary' }, kingdom: { $ref: '#/components/schemas/Summary' }, phylum: { $ref: '#/components/schemas/Summary' }, class: { $ref: '#/components/schemas/Summary' }, order: { $ref: '#/components/schemas/Summary' }, family: { $ref: '#/components/schemas/Summary' }, genus: { $ref: '#/components/schemas/Summary' } }
+        periods: { type: array, description: Oldest first., items: { $ref: '#/components/schemas/SpeciesPeriod' } }
+        continents: { type: array, description: 'Prehistoric first, then by name.', items:{ $ref: '#/components/schemas/ContinentSummary' } }
+        countries: { type: array, description: Sorted by name., items: { $ref: '#/components/schemas/Summary' } }
+      example:
+        id: tyrannosaurus-rex
+        name: Tyrannosaurus
+        scientific_name: Tyrannosaurus rex
+        diet: carnivore
+        description: Large theropod from the Late Cretaceous of western North America.
+        discovery_year: 1905
+        image_url: https://example.org/trex.png
+        size: { length_m: { min: 11, max: 12.3 }, height_m: null, weight_kg: { min: 5000, max: 8000 } }
+        taxonomy:
+          domain: { id: eukaryota, name: Eukaryota }
+          kingdom: { id: animalia, name: Animalia }
+          phylum: { id: chordata, name: Chordata }
+          class: { id: reptilia, name: Reptilia }
+          order: { id: saurischia, name: Saurischia }
+          family: { id: tyrannosauridae, name: Tyrannosauridae }
+          genus: { id: tyrannosaurus, name: Tyrannosaurus }
+        periods: [{ id: cretaceous, name: Cretaceous, era: { id: mesozoic, name: Mesozoic } }]
+        continents: [{ id: laramidia, name: Laramidia, type: prehistoric }, { id: north-america, name: North America, type: modern }]
+        countries: [{ id: canada, name: Canada }, { id: usa, name: United States }]
+    SpeciesCreate:
+      type: object
+      additionalProperties: false
+      required: [id, name, scientific_name, diet, description, genus_id, period_ids]
+      properties:
+        id: { $ref: '#/components/schemas/Slug' }
+        name: { $ref: '#/components/schemas/Name' }
+        scientific_name: { type: string, minLength: 1, maxLength: 128, description: 'Unique, compared ignoring case.' }
+        diet: { $ref: '#/components/schemas/Diet' }
+        description: { type: string, minLength: 1, maxLength: 1000 }
+        genus_id: { $ref: '#/components/schemas/Slug' }
+        period_ids: { type: array, minItems: 1, maxItems: 20, uniqueItems: true, items: { $ref: '#/components/schemas/Slug' } }
+        continent_ids: { type: [array, 'null'], maxItems: 20, uniqueItems: true, items: { $ref: '#/components/schemas/Slug' }, description: Prehistoric and modern allowed; null or omitted means none. }
+        country_ids: { type: [array, 'null'], maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Slug' }, description: Countries where fossils were found; independent of continent_ids. }
+        size: { anyOf: [{ $ref: '#/components/schemas/SizeInput' }, { type: 'null' }] }
+        discovery_year: { type: [integer, 'null'], minimum: 1600, description: Up to the current year (UTC). }
+        image_url: { type: [string, 'null'], maxLength: 2048, pattern: '^[Hh][Tt][Tt][Pp][Ss]?://[^/?#]', description: Absolute http or https URL. }
+      example:
+        id: tyrannosaurus-rex
+        name: Tyrannosaurus
+        scientific_name: Tyrannosaurus rex
+        diet: carnivore
+        description: Large theropod from the Late Cretaceous of western North America.
+        genus_id: tyrannosaurus
+        period_ids: [cretaceous]
+        continent_ids: [laramidia, north-america]
+        country_ids: [canada, usa]
+        size: { length_m: { min: 11.0, max: 12.3 }, weight_kg: { min: 5000, max: 8000 } }
+        discovery_year: 1905
+        image_url: https://example.org/trex.png
+    SpeciesPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Same field rules as SpeciesCreate; `id` is not allowed. `period_ids` cannot be null or empty.
+      properties:
+        name: { $ref: '#/components/schemas/Name' }
+        scientific_name: { type: string, minLength: 1, maxLength: 128 }
+        diet: { $ref: '#/components/schemas/Diet' }
+        description: { type: string, minLength: 1, maxLength: 1000 }
+        genus_id: { $ref: '#/components/schemas/Slug' }
+        period_ids: { type: array, minItems: 1, maxItems: 20, uniqueItems: true, items: { $ref: '#/components/schemas/Slug' } }
+        continent_ids: { type: [array, 'null'], maxItems: 20, uniqueItems: true, items: { $ref: '#/components/schemas/Slug' } }
+        country_ids: { type: [array, 'null'], maxItems: 50, uniqueItems: true, items: { $ref: '#/components/schemas/Slug' } }
+        size: { anyOf: [{ $ref: '#/components/schemas/SizeInput' }, { type: 'null' }] }
+        discovery_year: { type: [integer, 'null'], minimum: 1600 }
+        image_url: { type: [string, 'null'], maxLength: 2048, pattern: '^[Hh][Tt][Tt][Pp][Ss]?://[^/?#]' }
+
+    # ---- envelopes
+    EraEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Era' } } }
+    EraPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Era' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    PeriodEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Period' } } }
+    PeriodPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Period' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    DomainEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Domain' } } }
+    DomainPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Domain' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    KingdomEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Kingdom' } } }
+    KingdomPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Kingdom' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    PhylumEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Phylum' } } }
+    PhylumPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Phylum' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    ClassEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Class' } } }
+    ClassPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Class' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    OrderEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Order' } } }
+    OrderPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Order' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    FamilyEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Family' } } }
+    FamilyPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Family' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    GenusEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Genus' } } }
+    GenusPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Genus' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    ContinentEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Continent' } } }
+    ContinentPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Continent' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    CountryEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Country' } } }
+    CountryPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Country' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
+    SpeciesEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/Species' } } }
+    SpeciesPageEnvelope: { type: object, required: [data, pagination], properties: { data: { type: array, items: { $ref: '#/components/schemas/Species' } }, pagination: { $ref: '#/components/schemas/Pagination' } } }
