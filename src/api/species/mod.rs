@@ -15,6 +15,15 @@ use super::input::is_slug;
 use super::params::{Pagination, Params};
 use super::read_tx;
 
+/// `diet` values (spec §5.6).
+pub const DIETS: &[&str] = &[
+    "carnivore",
+    "herbivore",
+    "omnivore",
+    "piscivore",
+    "insectivore",
+];
+
 /// Query parameters of `GET /species`.
 const KNOWN: &[&str] = &[
     "page",
@@ -50,7 +59,21 @@ fn parse_list(req: &HttpRequest) -> Result<SpeciesQuery, ApiError> {
     Ok(SpeciesQuery {
         page: p.page()?,
         sort: p.sort(SORTS, DEFAULT_SORT)?,
-        filter: SpeciesFilter::default(),
+        filter: SpeciesFilter {
+            diet: p.one_of("diet", DIETS)?,
+            era: p.slug("era")?,
+            period: p.slug("period")?,
+            domain: p.slug("domain")?,
+            kingdom: p.slug("kingdom")?,
+            phylum: p.slug("phylum")?,
+            class: p.slug("class")?,
+            order: p.slug("order")?,
+            family: p.slug("family")?,
+            genus: p.slug("genus")?,
+            continent: p.slug("continent")?,
+            country: p.slug("country")?,
+            q: p.q()?,
+        },
     })
 }
 
