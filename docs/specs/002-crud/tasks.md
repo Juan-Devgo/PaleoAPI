@@ -25,7 +25,7 @@
 - [X] T018 Implement write-body reader (plan §Request pipeline step 3, research R5), cached `GET` responder (research R7), envelopes, `Location` in `src/api/http.rs`
 - [X] T019 [P] Implement `api_connect_options` (research R3) in `src/db.rs`
 - [X] T020 Implement `Field<T>`, object walker, shared validators (research R2, R10) in `src/api/input.rs`
-- [ ] T021 Implement `app()`, CORS `DefaultHeaders` and `OPTIONS` short-circuit (research R6), default `404`, empty `ROUTES` (plan §Request pipeline) in `src/api/mod.rs`
+- [X] T021 Implement `app()`, CORS `DefaultHeaders` and `OPTIONS` short-circuit (research R6), default `404`, empty `ROUTES` (plan §Request pipeline) in `src/api/mod.rs`
 - [ ] T022 Replace stub handlers and `/` route with `api::app`, `api_connect_options` pool, `DenyAll` gate in `src/main.rs`
 
 ## Phase 3: US1 + US3 — Paginated species cards (MVP)
