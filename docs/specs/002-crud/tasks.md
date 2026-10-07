@@ -67,7 +67,7 @@
 - [X] T048 [P] [US6] Write case (h) deny (plan §Cases `startup.rs` (h) deny) in `tests/startup.rs`
 - [X] T065 [P] [US6] Write range-merge and attribution unit tests (plan §Cases `geologic_time.rs` (unit)) in `src/api/geologic_time.rs`
 - [X] T066 [P] [US6] Write `size` validator unit tests (plan §Cases `species/input.rs` (unit)) in `src/api/species/input.rs`
-- [ ] T049 [US6] Implement SQLSTATE + constraint map, `is_mapped`, dependents lookup and message (data-model §4, §5), `500` stderr line (plan §Write path), then run `cargo sqlx prepare -- --all-targets`, in `src/api/db_error.rs`, `.sqlx/`
+- [X] T049 [US6] Implement SQLSTATE + constraint map, `is_mapped`, dependents lookup and message (data-model §4, §5), `500` stderr line (plan §Write path), then run `cargo sqlx prepare -- --all-targets`, in `src/api/db_error.rs`, `.sqlx/`
 - [ ] T050 [P] [US6] Implement era and period writes (plan §Write path; data-model §2, §3, §6), then run `cargo sqlx prepare -- --all-targets`, in `src/api/geologic_time.rs`, `.sqlx/`
 - [ ] T051 [P] [US6] Implement rank writes: `POST /domains`, nested create, reparent, delete (plan §Write path), then run `cargo sqlx prepare -- --all-targets`, in `src/api/taxonomy.rs`, `.sqlx/`
 - [ ] T052 [P] [US6] Implement continent and country writes (plan §Write path; data-model §2, §6), then run `cargo sqlx prepare -- --all-targets`, in `src/api/geography.rs`, `.sqlx/`

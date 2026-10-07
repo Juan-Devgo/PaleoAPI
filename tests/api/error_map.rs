@@ -7,15 +7,20 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use crate::support::app;
 use crate::support::db_support::{RESOURCE_TABLES, all_tables};
 
-/// Constraint names and unique index names of schema `public`.
+/// Constraint names and unique index names of the API's tables in schema `public`.
+/// `NOT NULL` (`n`) entries are excluded: the API never writes `NULL` to a required
+/// column (validated first). Constraint triggers (`t`) raise the `*_ck` names listed in
+/// [`trigger_names`], not their own.
 async fn schema_names(pool: &PgPool) -> Vec<String> {
     sqlx::query_scalar(
         "SELECT conname::text FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace \
-          WHERE n.nspname = 'public' \
+          WHERE n.nspname = 'public' AND c.contype NOT IN ('n', 't') \
+            AND c.conrelid <> '_sqlx_migrations'::regclass \
          UNION \
          SELECT i.relname::text FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid \
            JOIN pg_namespace n ON n.oid = i.relnamespace \
           WHERE n.nspname = 'public' AND x.indisunique \
+            AND x.indrelid <> '_sqlx_migrations'::regclass \
          ORDER BY 1",
     )
     .fetch_all(pool)

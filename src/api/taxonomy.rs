@@ -36,11 +36,16 @@ pub struct Rank {
     pub page_select: &'static str,
     /// Count statement prefix (no join).
     pub count_select: &'static str,
+    /// Q-W10: dependents (child rows, or species of a genus), counted, first 5 ids.
+    pub dependents_sql: &'static str,
+    /// Noun of the dependents in messages: (singular, plural).
+    pub dependents_noun: (&'static str, &'static str),
 }
 
 /// Builds a [`Rank`]; `$parent` is `(index, table, column)` for every rank but domains.
 macro_rules! rank {
-    ($plural:literal, $singular:literal, $res:ident, child: $child:expr) => {
+    ($plural:literal, $singular:literal, $res:ident, child: $child:expr,
+     dependents: ($dtable:literal, $dcol:literal, $dnoun:literal, $dnouns:literal)) => {
         Rank {
             plural: $plural,
             singular: $singular,
@@ -60,9 +65,18 @@ macro_rules! rank {
                 " t"
             ),
             count_select: concat!("SELECT count(*) FROM ", $plural, " t"),
+            dependents_sql: concat!(
+                "SELECT c.id, count(*) OVER () AS total FROM ",
+                $dtable,
+                " c WHERE c.",
+                $dcol,
+                " = $1 ORDER BY c.id LIMIT 5"
+            ),
+            dependents_noun: ($dnoun, $dnouns),
         }
     };
-    ($plural:literal, $singular:literal, $res:ident, parent: ($pidx:expr, $ptable:literal, $pcol:literal), child: $child:expr) => {
+    ($plural:literal, $singular:literal, $res:ident, parent: ($pidx:expr, $ptable:literal, $pcol:literal),
+     child: $child:expr, dependents: ($dtable:literal, $dcol:literal, $dnoun:literal, $dnouns:literal)) => {
         Rank {
             plural: $plural,
             singular: $singular,
@@ -89,22 +103,41 @@ macro_rules! rank {
                 $pcol
             ),
             count_select: concat!("SELECT count(*) FROM ", $plural, " t"),
+            dependents_sql: concat!(
+                "SELECT c.id, count(*) OVER () AS total FROM ",
+                $dtable,
+                " c WHERE c.",
+                $dcol,
+                " = $1 ORDER BY c.id LIMIT 5"
+            ),
+            dependents_noun: ($dnoun, $dnouns),
         }
     };
 }
 
 /// The seven ranks, top-down (spec §5.3).
 pub static RANKS: [Rank; 7] = [
-    rank!("domains", "domain", Domain, child: Some(1)),
-    rank!("kingdoms", "kingdom", Kingdom, parent: (0, "domains", "domain_id"), child: Some(2)),
-    rank!("phyla", "phylum", Phylum, parent: (1, "kingdoms", "kingdom_id"), child: Some(3)),
-    rank!("classes", "class", Class, parent: (2, "phyla", "phylum_id"), child: Some(4)),
-    rank!("orders", "order", Order, parent: (3, "classes", "class_id"), child: Some(5)),
-    rank!("families", "family", Family, parent: (4, "orders", "order_id"), child: Some(6)),
-    rank!("genera", "genus", Genus, parent: (5, "families", "family_id"), child: None),
+    rank!("domains", "domain", Domain, child: Some(1),
+        dependents: ("kingdoms", "domain_id", "kingdom", "kingdoms")),
+    rank!("kingdoms", "kingdom", Kingdom, parent: (0, "domains", "domain_id"), child: Some(2),
+        dependents: ("phyla", "kingdom_id", "phylum", "phyla")),
+    rank!("phyla", "phylum", Phylum, parent: (1, "kingdoms", "kingdom_id"), child: Some(3),
+        dependents: ("classes", "phylum_id", "class", "classes")),
+    rank!("classes", "class", Class, parent: (2, "phyla", "phylum_id"), child: Some(4),
+        dependents: ("orders", "class_id", "order", "orders")),
+    rank!("orders", "order", Order, parent: (3, "classes", "class_id"), child: Some(5),
+        dependents: ("families", "order_id", "family", "families")),
+    rank!("families", "family", Family, parent: (4, "orders", "order_id"), child: Some(6),
+        dependents: ("genera", "family_id", "genus", "genera")),
+    rank!("genera", "genus", Genus, parent: (5, "families", "family_id"), child: None,
+        dependents: ("species", "genus_id", "species", "species")),
 ];
 
 impl Rank {
+    /// The rank of a taxonomy resource.
+    pub fn of(res: Resource) -> Option<&'static Rank> {
+        RANKS.iter().find(|r| r.resource == res)
+    }
     pub fn parent_rank(&self) -> Option<&'static Rank> {
         self.parent.map(|i| &RANKS[i])
     }
