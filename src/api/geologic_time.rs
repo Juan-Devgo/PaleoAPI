@@ -3,15 +3,17 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 use bigdecimal::BigDecimal;
 use serde::Serialize;
-use sqlx::{PgPool, Postgres, QueryBuilder};
+use sqlx::{PgConnection, PgPool, Postgres, QueryBuilder};
 
+use super::auth::AdminGate;
+use super::db_error::{Ctx, Op, map_write};
 use super::decimal::Decimal;
 use super::error::{ApiError, FieldError, Resource};
-use super::http::{Many, One, cached_json};
-use super::input::is_slug;
+use super::http::{Many, One, cached_json, created, updated};
+use super::input::{self, Obj, decimal, is_slug, slug};
 use super::params::{ListQuery, Pagination, Params, Sort};
 use super::species::card::Summary;
-use super::{paged, read_tx};
+use super::{begin_write, delete_resource, paged, read_tx, write_body};
 
 // ---------------------------------------------------------------- representations
 
@@ -326,38 +328,609 @@ pub struct Sent {
 
 /// The resulting range: sent values over stored ones (spec §4.10).
 pub fn merge_range(
-    _stored: (Decimal, Decimal),
-    _start: Option<Decimal>,
-    _end: Option<Decimal>,
+    stored: (Decimal, Decimal),
+    start: Option<Decimal>,
+    end: Option<Decimal>,
 ) -> (Decimal, Decimal) {
-    todo!()
+    (start.unwrap_or(stored.0), end.unwrap_or(stored.1))
+}
+
+fn only_start(sent: Sent) -> bool {
+    sent.start_mya && !sent.end_mya
+}
+
+fn only_end(sent: Sent) -> bool {
+    sent.end_mya && !sent.start_mya
 }
 
 /// `start_mya > end_mya`, attributed per data-model §6.
-pub fn range_problem(_start: &Decimal, _end: &Decimal, _sent: Sent) -> Option<FieldError> {
-    todo!()
+pub fn range_problem(start: &Decimal, end: &Decimal, sent: Sent) -> Option<FieldError> {
+    if start > end {
+        return None;
+    }
+    Some(if only_start(sent) {
+        FieldError::new(
+            "start_mya",
+            format!("start_mya ({start}) must be greater than end_mya ({end})."),
+        )
+    } else {
+        FieldError::new(
+            "end_mya",
+            format!("end_mya ({end}) must be less than start_mya ({start})."),
+        )
+    })
 }
 
 /// Field of an era or period overlap (data-model §6).
-pub fn overlap_field(_sent: Sent) -> &'static str {
-    todo!()
+pub fn overlap_field(sent: Sent) -> &'static str {
+    if only_end(sent) {
+        "end_mya"
+    } else {
+        "start_mya"
+    }
 }
 
 /// Fields of a period outside its era (data-model §6); empty when inside.
 pub fn outside_era_fields(
-    _period: (&Decimal, &Decimal),
-    _era: (&Decimal, &Decimal),
-    _sent: Sent,
+    period: (&Decimal, &Decimal),
+    era: (&Decimal, &Decimal),
+    sent: Sent,
 ) -> Vec<&'static str> {
-    todo!()
+    let starts_before = period.0 > era.0;
+    let ends_after = period.1 < era.1;
+    if !starts_before && !ends_after {
+        return Vec::new();
+    }
+    if sent.era_id && !sent.start_mya && !sent.end_mya {
+        return vec!["era_id"];
+    }
+    let mut fields = Vec::new();
+    if starts_before {
+        fields.push("start_mya");
+    }
+    if ends_after {
+        fields.push("end_mya");
+    }
+    fields
 }
 
 /// Sides of an era range that exclude some of its periods (data-model §6).
 pub fn excluded_sides(
-    _era: (&Decimal, &Decimal),
-    _periods: &[(Decimal, Decimal)],
+    era: (&Decimal, &Decimal),
+    periods: &[(Decimal, Decimal)],
 ) -> Vec<&'static str> {
-    todo!()
+    let mut sides = Vec::new();
+    if periods.iter().any(|(s, _)| s > era.0) {
+        sides.push("start_mya");
+    }
+    if periods.iter().any(|(_, e)| e < era.1) {
+        sides.push("end_mya");
+    }
+    sides
+}
+
+// ---------------------------------------------------------------- write lookups (data-model §3)
+
+#[derive(Debug)]
+struct IdRow {
+    id: String,
+}
+
+#[derive(Debug)]
+struct OutsideRow {
+    id: String,
+    start_mya: BigDecimal,
+    end_mya: BigDecimal,
+}
+
+fixed_query! {
+    /// Q-W5: eras overlapping a range, other than `$3` (first 5 by id).
+    pub const ERA_OVERLAP_SQL = "SELECT e.id FROM eras e \
+        WHERE numrange(e.end_mya, e.start_mya, '[)') && numrange($1::numeric, $2::numeric, '[)') \
+          AND e.id <> $3 ORDER BY e.id LIMIT 5";
+    fn era_overlaps(end: &BigDecimal, start: &BigDecimal, id: &str) -> fetch_all IdRow;
+}
+
+fixed_query! {
+    /// Q-W6: periods overlapping a range, other than `$3` (first 5 by id).
+    pub const PERIOD_OVERLAP_SQL = "SELECT p.id FROM periods p \
+        WHERE numrange(p.end_mya, p.start_mya, '[)') && numrange($1::numeric, $2::numeric, '[)') \
+          AND p.id <> $3 ORDER BY p.id LIMIT 5";
+    fn period_overlaps(end: &BigDecimal, start: &BigDecimal, id: &str) -> fetch_all IdRow;
+}
+
+fixed_query! {
+    /// Q-W7: periods of an era outside a new era range (first 5 by id).
+    pub const ERA_PERIODS_OUTSIDE_SQL = "SELECT p.id, p.start_mya, p.end_mya FROM periods p \
+        WHERE p.era_id = $1 AND (p.start_mya > $2::numeric OR p.end_mya < $3::numeric) \
+        ORDER BY p.id LIMIT 5";
+    fn era_periods_outside(id: &str, start: &BigDecimal, end: &BigDecimal) -> fetch_all OutsideRow;
+}
+
+fn mya() -> impl Fn(&str, &serde_json::Value) -> Result<Decimal, String> {
+    decimal(3, 0, false, Some(4600))
+}
+
+fn id_list(rows: &[IdRow]) -> String {
+    rows.iter()
+        .map(|r| r.id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+const ID_IMMUTABLE: &str =
+    "id cannot be changed. Remove it from the body; create a new resource instead.";
+
+/// Range rules of an era with the resulting range: order, overlap, containment.
+async fn check_era_range(
+    conn: &mut PgConnection,
+    o: &mut Obj,
+    id: &str,
+    range: (&Decimal, &Decimal),
+    sent: Sent,
+    existing: bool,
+) -> sqlx::Result<()> {
+    if let Some(e) = range_problem(range.0, range.1, sent) {
+        o.push(e.field, e.message);
+        return Ok(());
+    }
+    let overlaps = era_overlaps(conn, range.1.as_big(), range.0.as_big(), id).await?;
+    if !overlaps.is_empty() {
+        o.push(
+            overlap_field(sent),
+            format!(
+                "The range {}–{} overlaps era(s) {}. Eras may touch at a boundary but not overlap.",
+                range.0,
+                range.1,
+                id_list(&overlaps)
+            ),
+        );
+    }
+    if existing {
+        let outside = era_periods_outside(conn, id, range.0.as_big(), range.1.as_big()).await?;
+        let ranges: Vec<(Decimal, Decimal)> = outside
+            .iter()
+            .map(|r| {
+                (
+                    Decimal::from_db(r.start_mya.clone()),
+                    Decimal::from_db(r.end_mya.clone()),
+                )
+            })
+            .collect();
+        let ids: Vec<&str> = outside.iter().map(|r| r.id.as_str()).collect();
+        for side in excluded_sides(range, &ranges) {
+            o.push(
+                side,
+                format!(
+                    "The range {}–{} must still contain all of the era's periods; it leaves out {}. \
+                     Change or move those periods first.",
+                    range.0,
+                    range.1,
+                    ids.join(", ")
+                ),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Range rules of a period with the resulting range and era.
+async fn check_period_range(
+    conn: &mut PgConnection,
+    o: &mut Obj,
+    id: &str,
+    range: (&Decimal, &Decimal),
+    era: Option<(&str, &Decimal, &Decimal)>,
+    sent: Sent,
+) -> sqlx::Result<()> {
+    if let Some(e) = range_problem(range.0, range.1, sent) {
+        o.push(e.field, e.message);
+        return Ok(());
+    }
+    if let Some((era_id, es, ee)) = era {
+        for field in outside_era_fields(range, (es, ee), sent) {
+            let message = match field {
+                "era_id" => format!(
+                    "The period's range {}–{} does not lie within era '{era_id}' ({es}–{ee}). \
+                     Send a new range together with era_id, or choose another era.",
+                    range.0, range.1
+                ),
+                "start_mya" => format!(
+                    "start_mya ({}) must not be greater than the start_mya of era '{era_id}' ({es}).",
+                    range.0
+                ),
+                _ => format!(
+                    "end_mya ({}) must not be less than the end_mya of era '{era_id}' ({ee}).",
+                    range.1
+                ),
+            };
+            o.push(field, message);
+        }
+    }
+    if sent.start_mya || sent.end_mya {
+        let overlaps = period_overlaps(conn, range.1.as_big(), range.0.as_big(), id).await?;
+        if !overlaps.is_empty() {
+            o.push(
+                overlap_field(sent),
+                format!(
+                    "The range {}–{} overlaps period(s) {}. Periods may touch at a boundary but not overlap.",
+                    range.0,
+                    range.1,
+                    id_list(&overlaps)
+                ),
+            );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- write handlers
+
+/// `POST /eras`.
+pub async fn create_era(
+    req: HttpRequest,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let mut tx = begin_write(&pool).await?;
+    let mut o = Obj::new(body)?;
+    let id = o.required("id", slug);
+    let name = o.required("name", input::name);
+    let start = o.required("start_mya", mya());
+    let end = o.required("end_mya", mya());
+    let sent = Sent {
+        start_mya: true,
+        end_mya: true,
+        era_id: false,
+    };
+    if let (Some(s), Some(e)) = (&start, &end) {
+        check_era_range(
+            &mut tx,
+            &mut o,
+            id.as_deref().unwrap_or(""),
+            (s, e),
+            sent,
+            false,
+        )
+        .await?;
+    }
+    o.finish()?;
+    let (Some(id), Some(name), Some(start), Some(end)) = (id, name, start, end) else {
+        return Err(ApiError::internal());
+    };
+    let ctx = Ctx::new(Resource::Era, &id, Op::Insert)
+        .name(Some(&name))
+        .sent(sent);
+    sqlx::query!(
+        "INSERT INTO eras (id, name, start_mya, end_mya) VALUES ($1, $2, $3, $4)",
+        id,
+        name,
+        start.as_big(),
+        end.as_big()
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| map_write(&e, &ctx))?;
+    let row = era_by_id(&mut tx, &id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    tx.commit().await.map_err(|e| map_write(&e, &ctx))?;
+    Ok(created(
+        format!("/api/v1/eras/{id}"),
+        &One {
+            data: Era::from(row),
+        },
+    ))
+}
+
+/// `PATCH /eras/{era_id}`.
+pub async fn update_era(
+    req: HttpRequest,
+    path: web::Path<String>,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let id = path.into_inner();
+    if !is_slug(&id) {
+        return Err(ApiError::not_found(Resource::Era, &id));
+    }
+    let mut tx = begin_write(&pool).await?;
+    let Some(stored) = sqlx::query!(
+        "SELECT start_mya, end_mya FROM eras WHERE id = $1 FOR NO KEY UPDATE",
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Err(ApiError::not_found(Resource::Era, &id));
+    };
+    let mut o = Obj::new(body)?;
+    let sent = Sent {
+        start_mya: o.has("start_mya"),
+        end_mya: o.has("end_mya"),
+        era_id: false,
+    };
+    o.forbid("id", ID_IMMUTABLE);
+    o.require_some_field();
+    let name = o.patch("name", input::name);
+    let start = o.patch("start_mya", mya());
+    let end = o.patch("end_mya", mya());
+    if let (Some(start), Some(end)) = (&start, &end)
+        && (sent.start_mya || sent.end_mya)
+    {
+        let (s, e) = merge_range(
+            (
+                Decimal::from_db(stored.start_mya),
+                Decimal::from_db(stored.end_mya),
+            ),
+            start.clone(),
+            end.clone(),
+        );
+        check_era_range(&mut tx, &mut o, &id, (&s, &e), sent, true).await?;
+    }
+    o.finish()?;
+    let name = name.flatten();
+    let (start, end) = (start.flatten(), end.flatten());
+    let ctx = Ctx::new(Resource::Era, &id, Op::Update)
+        .name(name.as_deref())
+        .sent(sent);
+    sqlx::query!(
+        "UPDATE eras SET name = COALESCE($2, name), start_mya = COALESCE($3, start_mya), \
+         end_mya = COALESCE($4, end_mya) WHERE id = $1",
+        id,
+        name,
+        start.as_ref().map(Decimal::as_big),
+        end.as_ref().map(Decimal::as_big)
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| map_write(&e, &ctx))?;
+    let row = era_by_id(&mut tx, &id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    tx.commit().await.map_err(|e| map_write(&e, &ctx))?;
+    Ok(updated(&One {
+        data: Era::from(row),
+    }))
+}
+
+/// `DELETE /eras/{era_id}`.
+pub async fn delete_era(
+    req: HttpRequest,
+    path: web::Path<String>,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let id = path.into_inner();
+    delete_resource(
+        &req,
+        gate.get_ref(),
+        &pool,
+        Resource::Era,
+        &id,
+        async |c: &mut PgConnection| {
+            Ok(
+                sqlx::query!("SELECT 1 AS one FROM eras WHERE id = $1 FOR UPDATE", id)
+                    .fetch_optional(c)
+                    .await?
+                    .is_some(),
+            )
+        },
+        async |c: &mut PgConnection| {
+            sqlx::query!("DELETE FROM eras WHERE id = $1", id)
+                .execute(c)
+                .await
+                .map(|_| ())
+        },
+    )
+    .await
+}
+
+/// `POST /eras/{era_id}/periods`.
+pub async fn create_period(
+    req: HttpRequest,
+    path: web::Path<String>,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let era_id = path.into_inner();
+    if !is_slug(&era_id) {
+        return Err(ApiError::not_found(Resource::Era, &era_id));
+    }
+    let mut tx = begin_write(&pool).await?;
+    let Some(era) = era_by_id(&mut tx, &era_id).await? else {
+        return Err(ApiError::not_found(Resource::Era, &era_id));
+    };
+    let era = Era::from(era);
+    let mut o = Obj::new(body)?;
+    o.forbid(
+        "era_id",
+        "era_id must not be sent: the period is created in the era of the path.",
+    );
+    let id = o.required("id", slug);
+    let name = o.required("name", input::name);
+    let start = o.required("start_mya", mya());
+    let end = o.required("end_mya", mya());
+    let sent = Sent {
+        start_mya: true,
+        end_mya: true,
+        era_id: false,
+    };
+    if let (Some(s), Some(e)) = (&start, &end) {
+        check_period_range(
+            &mut tx,
+            &mut o,
+            id.as_deref().unwrap_or(""),
+            (s, e),
+            Some((&era.id, &era.start_mya, &era.end_mya)),
+            sent,
+        )
+        .await?;
+    }
+    o.finish()?;
+    let (Some(id), Some(name), Some(start), Some(end)) = (id, name, start, end) else {
+        return Err(ApiError::internal());
+    };
+    let ctx = Ctx::new(Resource::Period, &id, Op::Insert)
+        .name(Some(&name))
+        .sent(sent);
+    sqlx::query!(
+        "INSERT INTO periods (id, era_id, name, start_mya, end_mya) VALUES ($1, $2, $3, $4, $5)",
+        id,
+        era_id,
+        name,
+        start.as_big(),
+        end.as_big()
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| map_write(&e, &ctx))?;
+    let row = period_by_id(&mut tx, &id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    tx.commit().await.map_err(|e| map_write(&e, &ctx))?;
+    Ok(created(
+        format!("/api/v1/periods/{id}"),
+        &One {
+            data: Period::from(row),
+        },
+    ))
+}
+
+/// `PATCH /periods/{period_id}`.
+pub async fn update_period(
+    req: HttpRequest,
+    path: web::Path<String>,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let id = path.into_inner();
+    if !is_slug(&id) {
+        return Err(ApiError::not_found(Resource::Period, &id));
+    }
+    let mut tx = begin_write(&pool).await?;
+    let Some(stored) = sqlx::query!(
+        "SELECT era_id, start_mya, end_mya FROM periods WHERE id = $1 FOR NO KEY UPDATE",
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Err(ApiError::not_found(Resource::Period, &id));
+    };
+    let mut o = Obj::new(body)?;
+    let sent = Sent {
+        start_mya: o.has("start_mya"),
+        end_mya: o.has("end_mya"),
+        era_id: o.has("era_id"),
+    };
+    o.forbid("id", ID_IMMUTABLE);
+    o.require_some_field();
+    let name = o.patch("name", input::name);
+    let start = o.patch("start_mya", mya());
+    let end = o.patch("end_mya", mya());
+    let era_id = o.patch("era_id", slug);
+
+    // The resulting era: the sent one (it must exist) or the stored one.
+    let target = match &era_id {
+        Some(Some(new)) => Some(new.clone()),
+        Some(None) => Some(stored.era_id.clone()),
+        None => None,
+    };
+    let era = match &target {
+        Some(e) => era_by_id(&mut tx, e).await?.map(Era::from),
+        None => None,
+    };
+    if let (Some(Some(new)), None) = (&era_id, &era) {
+        o.push(
+            "era_id",
+            format!(
+                "era_id '{}' does not exist. Send the id of an existing era.",
+                input::truncate(new, input::ECHO)
+            ),
+        );
+    }
+    if let (Some(start), Some(end)) = (&start, &end)
+        && (sent.start_mya || sent.end_mya || sent.era_id)
+    {
+        let (s, e) = merge_range(
+            (
+                Decimal::from_db(stored.start_mya),
+                Decimal::from_db(stored.end_mya),
+            ),
+            start.clone(),
+            end.clone(),
+        );
+        let era = era
+            .as_ref()
+            .map(|e| (e.id.as_str(), &e.start_mya, &e.end_mya));
+        check_period_range(&mut tx, &mut o, &id, (&s, &e), era, sent).await?;
+    }
+    o.finish()?;
+    let name = name.flatten();
+    let (start, end) = (start.flatten(), end.flatten());
+    let ctx = Ctx::new(Resource::Period, &id, Op::Update)
+        .name(name.as_deref())
+        .sent(sent);
+    sqlx::query!(
+        "UPDATE periods SET name = COALESCE($2, name), era_id = COALESCE($3, era_id), \
+         start_mya = COALESCE($4, start_mya), end_mya = COALESCE($5, end_mya) WHERE id = $1",
+        id,
+        name,
+        era_id.flatten(),
+        start.as_ref().map(Decimal::as_big),
+        end.as_ref().map(Decimal::as_big)
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| map_write(&e, &ctx))?;
+    let row = period_by_id(&mut tx, &id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    tx.commit().await.map_err(|e| map_write(&e, &ctx))?;
+    Ok(updated(&One {
+        data: Period::from(row),
+    }))
+}
+
+/// `DELETE /periods/{period_id}`.
+pub async fn delete_period(
+    req: HttpRequest,
+    path: web::Path<String>,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let id = path.into_inner();
+    delete_resource(
+        &req,
+        gate.get_ref(),
+        &pool,
+        Resource::Period,
+        &id,
+        async |c: &mut PgConnection| {
+            Ok(
+                sqlx::query!("SELECT 1 AS one FROM periods WHERE id = $1 FOR UPDATE", id)
+                    .fetch_optional(c)
+                    .await?
+                    .is_some(),
+            )
+        },
+        async |c: &mut PgConnection| {
+            sqlx::query!("DELETE FROM periods WHERE id = $1", id)
+                .execute(c)
+                .await
+                .map(|_| ())
+        },
+    )
+    .await
 }
 
 #[cfg(test)]

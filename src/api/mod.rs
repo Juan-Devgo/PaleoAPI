@@ -51,11 +51,17 @@ use self::error::{ApiError, no_store_on_get_errors};
 
 /// Every path under `/api/v1` and the methods it answers (OpenAPI drift test).
 pub const ROUTES: &[(&str, &[Method])] = &[
-    ("/eras", &[Method::GET]),
-    ("/eras/{era_id}", &[Method::GET]),
-    ("/eras/{era_id}/periods", &[Method::GET]),
+    ("/eras", &[Method::GET, Method::POST]),
+    (
+        "/eras/{era_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
+    ("/eras/{era_id}/periods", &[Method::GET, Method::POST]),
     ("/periods", &[Method::GET]),
-    ("/periods/{period_id}", &[Method::GET]),
+    (
+        "/periods/{period_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
     ("/taxonomy/domains", &[Method::GET]),
     ("/taxonomy/domains/{domain_id}", &[Method::GET]),
     ("/taxonomy/domains/{domain_id}/kingdoms", &[Method::GET]),
@@ -90,13 +96,29 @@ pub const ROUTES: &[(&str, &[Method])] = &[
 fn routes(cfg: &mut web::ServiceConfig) {
     use self::{geography as geo, geologic_time as time};
 
-    cfg.service(web::resource("/eras").route(web::get().to(time::list_eras)))
-        .service(web::resource("/eras/{era_id}").route(web::get().to(time::get_era)))
-        .service(
-            web::resource("/eras/{era_id}/periods").route(web::get().to(time::list_era_periods)),
-        )
-        .service(web::resource("/periods").route(web::get().to(time::list_periods)))
-        .service(web::resource("/periods/{period_id}").route(web::get().to(time::get_period)));
+    cfg.service(
+        web::resource("/eras")
+            .route(web::get().to(time::list_eras))
+            .route(web::post().to(time::create_era)),
+    )
+    .service(
+        web::resource("/eras/{era_id}")
+            .route(web::get().to(time::get_era))
+            .route(web::patch().to(time::update_era))
+            .route(web::delete().to(time::delete_era)),
+    )
+    .service(
+        web::resource("/eras/{era_id}/periods")
+            .route(web::get().to(time::list_era_periods))
+            .route(web::post().to(time::create_period)),
+    )
+    .service(web::resource("/periods").route(web::get().to(time::list_periods)))
+    .service(
+        web::resource("/periods/{period_id}")
+            .route(web::get().to(time::get_period))
+            .route(web::patch().to(time::update_period))
+            .route(web::delete().to(time::delete_period)),
+    );
 
     for rank in taxonomy::RANKS.iter() {
         let base = format!("/taxonomy/{}", rank.plural);
@@ -208,6 +230,61 @@ pub(crate) async fn read_tx(
 ) -> sqlx::Result<sqlx::Transaction<'static, sqlx::Postgres>> {
     pool.begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .await
+}
+
+/// A write transaction (READ COMMITTED, 001 plan §Notes 2).
+pub(crate) async fn begin_write(
+    pool: &PgPool,
+) -> sqlx::Result<sqlx::Transaction<'static, sqlx::Postgres>> {
+    pool.begin_with("BEGIN ISOLATION LEVEL READ COMMITTED")
+        .await
+}
+
+/// Check-order steps 2–3 of a body write: admin gate, then the body (research R5).
+pub(crate) async fn write_body(
+    req: &HttpRequest,
+    payload: web::Payload,
+    gate: &dyn AdminGate,
+) -> Result<serde_json::Value, ApiError> {
+    gate.check(req)?;
+    http::read_json(req, payload).await
+}
+
+/// `DELETE` of one resource: gate, path `404` under the row lock (Q-W2), dependents
+/// `409` (Q-W10), delete, `204` (spec §4.10).
+pub(crate) async fn delete_resource(
+    req: &HttpRequest,
+    gate: &dyn AdminGate,
+    pool: &PgPool,
+    res: error::Resource,
+    id: &str,
+    lock: impl AsyncFnOnce(&mut sqlx::PgConnection) -> sqlx::Result<bool>,
+    delete: impl AsyncFnOnce(&mut sqlx::PgConnection) -> sqlx::Result<()>,
+) -> Result<HttpResponse, ApiError> {
+    gate.check(req)?;
+    if !input::is_slug(id) {
+        return Err(ApiError::not_found(res, id));
+    }
+    let mut tx = begin_write(pool).await?;
+    if !lock(&mut tx).await? {
+        return Err(ApiError::not_found(res, id));
+    }
+    let deps = db_error::dependents(&mut tx, res, id).await?;
+    if !deps.is_empty() {
+        return Err(db_error::has_dependents(res, id, &deps));
+    }
+    if let Err(e) = delete(&mut tx).await {
+        if !db_error::is_fk_violation(&e) {
+            return Err(db_error::internal(&e));
+        }
+        // A dependent appeared concurrently; report it like the pre-check would.
+        tx.rollback().await?;
+        let mut conn = pool.acquire().await?;
+        let deps = db_error::dependents(&mut conn, res, id).await?;
+        return Err(db_error::has_dependents(res, id, &deps));
+    }
+    tx.commit().await.map_err(|e| db_error::internal(&e))?;
+    Ok(HttpResponse::NoContent().finish())
 }
 
 /// Every `OPTIONS` request is a successful preflight for public reads (research R6).

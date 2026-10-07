@@ -401,7 +401,7 @@ async fn period_patch_moves_and_merges(pool_opts: PgPoolOptions, opts: PgConnect
     let app = app(pool_opts, opts).await;
     seed_timeline(&app.pool).await;
     for sql in [
-        "INSERT INTO eras VALUES ('deep', 'Deep', 3000, 2000), ('other', 'Other', 1000, 500)",
+        "INSERT INTO eras VALUES ('deep', 'Deep', 3000, 2000), ('other', 'Other', 1500, 1000)",
         "INSERT INTO periods VALUES ('d1', 'deep', 'D1', 2900, 2100)",
     ] {
         exec(&app.pool, sql).await.unwrap();
@@ -460,7 +460,7 @@ async fn period_patch_moves_and_merges(pool_opts: PgPoolOptions, opts: PgConnect
         ),
         (
             "/api/v1/periods/d1",
-            json!({ "era_id": "other", "start_mya": 1100, "end_mya": 400 }),
+            json!({ "era_id": "other", "start_mya": 1600, "end_mya": 400 }),
             vec!["start_mya", "end_mya"],
         ),
     ] {
@@ -473,13 +473,13 @@ async fn period_patch_moves_and_merges(pool_opts: PgPoolOptions, opts: PgConnect
         &app,
         Method::PATCH,
         "/api/v1/periods/d1",
-        json!({ "era_id": "other", "start_mya": 900, "end_mya": 600 }),
+        json!({ "era_id": "other", "start_mya": 1400, "end_mya": 1100 }),
     )
     .await;
     assert_eq!(resp.status.as_u16(), 200, "{}", resp.text());
     assert_eq!(
         resp.json()["data"],
-        json!({ "id": "d1", "name": "D1", "start_mya": 900, "end_mya": 600, "era": { "id": "other", "name": "Other" } })
+        json!({ "id": "d1", "name": "D1", "start_mya": 1400, "end_mya": 1100, "era": { "id": "other", "name": "Other" } })
     );
     assert_eq!(ids(&get(&app, "/api/v1/eras/other/periods").await), ["d1"]);
     assert!(ids(&get(&app, "/api/v1/eras/deep/periods").await).is_empty());

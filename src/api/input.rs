@@ -47,6 +47,11 @@ impl Obj {
         }
     }
 
+    /// Whether the body sent `key` (any value, `null` included), before it is read.
+    pub fn has(&self, key: &str) -> bool {
+        self.map.contains_key(key)
+    }
+
     /// Reads a field without validating it.
     pub fn take(&mut self, key: &'static str) -> Field<Value> {
         if !self.known.contains(&key) {

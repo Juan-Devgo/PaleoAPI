@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE eras SET name = COALESCE($2, name), start_mya = COALESCE($3, start_mya), end_mya = COALESCE($4, end_mya) WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Numeric",
+        "Numeric"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cc30ab7f3880cd52a09b01526300b29f4307fa3943c12fec2c0244f2651184a5"
+}
