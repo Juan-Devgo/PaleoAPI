@@ -41,7 +41,7 @@
 ## Phase 4: US2 — Species filters and search
 
 - [X] T030 [US2] Write filter and search tests (plan §Cases `species_filters.rs`) in `tests/api/species_filters.rs`
-- [ ] T031 [US2] Implement filters Q-S4…Q-S11 and `q` escaping (plan §Read path) in `src/api/species/list.rs`
+- [X] T031 [US2] Implement filters Q-S4…Q-S11 and `q` escaping (plan §Read path) in `src/api/species/list.rs`
 - [ ] T032 [US2] Wire filter parsing into `GET /species` in `src/api/species/mod.rs`
 
 ## Phase 5: US4 — Browse timeline, taxonomy, and geography
