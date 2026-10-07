@@ -11,13 +11,13 @@
 
 - [X] T005 Create `api` module tree with `todo!()` stubs for the public surface (plan §Project Structure) in `src/lib.rs`, `src/api/`
 - [X] T006 Create test binary with every module declared as an empty file, plus helpers and token constants (plan §Helpers, §Rules) in `tests/api/main.rs`, `tests/api/support.rs`, `tests/api/tokens.rs`
-- [ ] T007 [P] Write `Decimal` unit tests (plan §Cases `decimal.rs`) in `src/api/decimal.rs`
-- [ ] T008 [P] Write input unit tests (plan §Cases `input.rs`) in `src/api/input.rs`
-- [ ] T009 [P] Write query-parameter unit tests (plan §Cases `params.rs`) in `src/api/params.rs`
-- [ ] T010 [P] Write content-type and `If-None-Match` unit tests (plan §Cases `http.rs`) in `src/api/http.rs`
-- [ ] T011 [P] Write `DenyAll` unit tests (plan §Cases `auth.rs`) in `src/api/auth.rs`
-- [ ] T012 [P] Write router-level tests (plan §Cases `global.rs` router) in `tests/api/global.rs`
-- [ ] T013 [P] Write case (h) serve (plan §Cases `startup.rs` (h) serve) in `tests/startup.rs`
+- [X] T007 [P] Write `Decimal` unit tests (plan §Cases `decimal.rs`) in `src/api/decimal.rs`
+- [X] T008 [P] Write input unit tests (plan §Cases `input.rs`) in `src/api/input.rs`
+- [X] T009 [P] Write query-parameter unit tests (plan §Cases `params.rs`) in `src/api/params.rs`
+- [X] T010 [P] Write content-type and `If-None-Match` unit tests (plan §Cases `http.rs`) in `src/api/http.rs`
+- [X] T011 [P] Write `DenyAll` unit tests (plan §Cases `auth.rs`) in `src/api/auth.rs`
+- [X] T012 [P] Write router-level tests (plan §Cases `global.rs` router) in `tests/api/global.rs`
+- [X] T013 [P] Write case (h) serve (plan §Cases `startup.rs` (h) serve) in `tests/startup.rs`
 - [ ] T014 Implement `ApiError`, codes (spec §4.12), `FieldError`, envelope rendering, `no-store` on `GET` errors in `src/api/error.rs`
 - [ ] T015 Implement `Decimal` (research R1) in `src/api/decimal.rs`
 - [ ] T016 Implement query-string parser (plan §Read path) in `src/api/params.rs`

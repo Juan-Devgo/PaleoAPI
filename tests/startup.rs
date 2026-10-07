@@ -1,7 +1,7 @@
 //! Runs the API binary and checks that it refuses to start safely
 //! (AC 2, AC 15, FR-002–FR-004).
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -120,6 +120,18 @@ async fn migration_rows(pool: &PgPool) -> Vec<String> {
         .unwrap()
 }
 
+/// Sends one raw HTTP/1.1 request to the running API and returns the whole response.
+fn raw_http(request: &str) -> String {
+    let mut stream = TcpStream::connect("127.0.0.1:8000").expect("connect to the API");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    response
+}
+
 async fn exec(pool: &PgPool, sql: &str) {
     sqlx::query(AssertSqlSafe(sql.to_string()))
         .execute(pool)
@@ -232,6 +244,10 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
         }
         std::thread::sleep(Duration::from_millis(100));
     };
+    // (h) serve: the binary serves `api::app`, not the old stub routes (AC 6.1.15).
+    let served = listening.then(|| {
+        raw_http("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+    });
     let still_running = child.try_wait().unwrap().is_none();
     child.kill().ok();
     child.wait().unwrap();
@@ -245,5 +261,14 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
     assert!(
         stderr.contains("paleo_api: warning:") && stderr.contains("paleo_name_sort"),
         "missing collation warning: {stderr}"
+    );
+    let served = served.unwrap();
+    assert!(
+        served.starts_with("HTTP/1.1 404"),
+        "GET / must be 404: {served}"
+    );
+    assert!(
+        served.contains("\"ROUTE_NOT_FOUND\""),
+        "GET / must answer the ROUTE_NOT_FOUND envelope: {served}"
     );
 }

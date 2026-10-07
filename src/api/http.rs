@@ -52,3 +52,43 @@ pub fn created<T: Serialize>(_location: String, _body: &T) -> HttpResponse {
 pub fn updated<T: Serialize>(_body: &T) -> HttpResponse {
     todo!()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_content_types() {
+        for ok in [
+            "application/json",
+            "application/json; charset=utf-8",
+            "Application/JSON",
+            "application/json;charset=UTF-8",
+        ] {
+            assert!(is_json_content_type(Some(ok)), "{ok}");
+        }
+        for bad in [
+            None,
+            Some(""),
+            Some("text/plain"),
+            Some("application/jsonx"),
+            Some("application/x-www-form-urlencoded"),
+            Some("multipart/form-data"),
+        ] {
+            assert!(!is_json_content_type(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn if_none_match_weak_comparison() {
+        let tag = "\"9f2c4a1be07d3c55\"";
+        assert!(if_none_match_matches(tag, tag));
+        assert!(if_none_match_matches("*", tag));
+        assert!(if_none_match_matches("W/\"9f2c4a1be07d3c55\"", tag));
+        assert!(if_none_match_matches("\"aaa\", \"9f2c4a1be07d3c55\"", tag));
+        assert!(if_none_match_matches("\"aaa\",W/\"9f2c4a1be07d3c55\"", tag));
+        assert!(!if_none_match_matches("\"aaa\"", tag));
+        assert!(!if_none_match_matches("9f2c4a1be07d3c55", tag));
+        assert!(!if_none_match_matches("", tag));
+    }
+}

@@ -134,3 +134,215 @@ pub fn integer(_min: i32) -> impl Fn(&str, &Value) -> Result<i32, String> {
 pub fn url(_field: &str, _v: &Value) -> Result<String, String> {
     todo!()
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn obj(v: Value) -> Obj {
+        Obj::new(v).unwrap()
+    }
+
+    /// The detail fields of a finished walker (sorted).
+    fn fields(o: Obj) -> Vec<String> {
+        match o.finish() {
+            Ok(()) => vec![],
+            Err(e) => {
+                assert_eq!(e.status().as_u16(), 422);
+                assert_eq!(e.code(), "VALIDATION_FAILED");
+                let mut f: Vec<String> = e.details().iter().map(|d| d.field.clone()).collect();
+                f.sort();
+                f
+            }
+        }
+    }
+
+    #[test]
+    fn slug_cases() {
+        let too_long = format!("a{}", "-b".repeat(32));
+        assert_eq!(too_long.len(), 65);
+        for bad in [
+            "", "A", "a", "-ab", "ab-", "a--b", "Ab", "a b", "a_b", "ñu", &too_long,
+        ] {
+            assert!(!is_slug(bad), "{bad:?}");
+            assert!(slug("id", &json!(bad)).is_err(), "{bad:?}");
+        }
+        for good in ["a1-b2", "ab", "tyrannosaurus-rex", &"a".repeat(64)] {
+            assert!(is_slug(good), "{good:?}");
+            assert_eq!(slug("id", &json!(good)).unwrap(), good);
+        }
+        assert!(slug("id", &json!(12)).is_err());
+    }
+
+    #[test]
+    fn text_is_trimmed_and_counted_in_characters() {
+        let max = "ñ".repeat(64);
+        assert_eq!(name("name", &json!(max)).unwrap(), max);
+        assert!(name("name", &json!("ñ".repeat(65))).is_err());
+        assert_eq!(name("name", &json!("  Mesozoic \t")).unwrap(), "Mesozoic");
+        assert_eq!(name("name", &json!("\u{a0}Rex\u{a0}")).unwrap(), "Rex");
+        for blank in ["", "   ", "\u{a0}", "\n\t"] {
+            assert!(name("name", &json!(blank)).is_err(), "{blank:?}");
+        }
+        assert!(name("name", &json!(5)).is_err());
+        assert_eq!(text(1000)("description", &json!(" x ")).unwrap(), "x");
+    }
+
+    #[test]
+    fn field_absent_null_value() {
+        let mut o = obj(json!({ "a": null, "b": "x" }));
+        assert_eq!(o.take("a"), Field::Null);
+        assert_eq!(o.take("b"), Field::Value(json!("x")));
+        assert_eq!(o.take("c"), Field::Absent);
+        assert!(fields(o).is_empty());
+
+        let mut o = obj(json!({ "a": null, "b": "x" }));
+        assert_eq!(o.optional("a", name), Some(Field::Null));
+        assert_eq!(o.optional("b", name), Some(Field::Value("x".to_string())));
+        assert_eq!(o.optional("c", name), Some(Field::Absent));
+        assert_eq!(o.optional("d", name), Some(Field::Absent));
+        assert!(fields(o).is_empty());
+    }
+
+    #[test]
+    fn required_fields_on_create() {
+        let mut o = obj(json!({ "name": null, "id": "Bad" }));
+        assert_eq!(o.required("name", name), None);
+        assert_eq!(o.required("id", slug), None);
+        assert_eq!(o.required("start_mya", decimal(3, 0, false, Some(4600))), None);
+        assert_eq!(fields(o), ["id", "name", "start_mya"]);
+    }
+
+    #[test]
+    fn patch_fields() {
+        let mut o = obj(json!({ "name": null, "start_mya": 10 }));
+        assert_eq!(o.patch("name", self::name), None);
+        assert_eq!(o.patch("end_mya", decimal(3, 0, false, Some(4600))), Some(None));
+        assert!(o.patch("start_mya", decimal(3, 0, false, Some(4600))).is_some());
+        assert_eq!(fields(o), ["name"]);
+    }
+
+    #[test]
+    fn unknown_and_response_only_fields_are_reported() {
+        let mut o = obj(json!({ "name": "Ok", "nmae": "typo", "era": { "id": "x" } }));
+        o.required("name", name);
+        assert_eq!(fields(o), ["era", "nmae"]);
+    }
+
+    #[test]
+    fn id_in_patch_and_empty_patch() {
+        let mut o = obj(json!({ "id": "new-id" }));
+        o.forbid("id", "id cannot be changed.");
+        o.require_some_field();
+        assert_eq!(fields(o), ["id"]);
+
+        let mut o = obj(json!({}));
+        o.require_some_field();
+        assert_eq!(fields(o), [""]);
+    }
+
+    #[test]
+    fn non_object_body_is_one_detail_on_the_whole_body() {
+        for body in [json!([]), json!("x"), json!(1), json!(null)] {
+            let err = Obj::new(body).unwrap_err();
+            assert_eq!(err.status().as_u16(), 422);
+            assert_eq!(err.details().len(), 1);
+            assert_eq!(err.details()[0].field, "");
+        }
+    }
+
+    #[test]
+    fn every_problem_is_reported() {
+        let mut o = obj(json!({ "id": "A", "name": "", "start_mya": 1.0001, "x": 1 }));
+        o.required("id", slug);
+        o.required("name", name);
+        o.required("start_mya", decimal(3, 0, false, Some(4600)));
+        o.required("end_mya", decimal(3, 0, false, Some(4600)));
+        assert_eq!(fields(o), ["end_mya", "id", "name", "start_mya", "x"]);
+    }
+
+    #[test]
+    fn decimal_bounds_and_places() {
+        let mya = decimal(3, 0, false, Some(4600));
+        assert!(mya("start_mya", &json!(4600)).is_ok());
+        assert!(mya("start_mya", &json!(0)).is_ok());
+        assert!(mya("start_mya", &json!(4600.001)).is_err());
+        assert!(mya("start_mya", &json!(-0.001)).is_err());
+        assert!(mya("start_mya", &json!(1.0001)).is_err());
+        assert!(mya("start_mya", &json!("1")).is_err());
+        let bound = decimal(6, 0, true, None);
+        assert!(bound("size.length_m.min", &json!(0)).is_err());
+        assert!(bound("size.length_m.min", &json!(0.000001)).is_ok());
+        let huge: Value = serde_json::from_str("1e15").unwrap();
+        assert!(bound("size.length_m.min", &huge).is_err());
+    }
+
+    #[test]
+    fn slug_lists() {
+        let list = slug_list(1, 3);
+        assert_eq!(
+            list("period_ids", &json!(["a1", "b2"])).unwrap(),
+            ["a1", "b2"]
+        );
+        assert!(list("period_ids", &json!([])).is_err());
+        assert!(list("period_ids", &json!(["a1", "a1"])).is_err());
+        assert!(list("period_ids", &json!(["a1", "b2", "c3", "d4"])).is_err());
+        assert!(list("period_ids", &json!(["Bad"])).is_err());
+        assert!(list("period_ids", &json!("a1")).is_err());
+        assert!(slug_list(0, 3)("continent_ids", &json!([])).unwrap().is_empty());
+    }
+
+    #[test]
+    fn urls() {
+        assert_eq!(url("image_url", &json!("HTTP://x")).unwrap(), "http://x");
+        assert_eq!(
+            url("image_url", &json!("HttpS://example.org/a.png")).unwrap(),
+            "https://example.org/a.png"
+        );
+        assert_eq!(url("image_url", &json!(" https://x/y ")).unwrap(), "https://x/y");
+        for bad in [
+            "ftp://x",
+            "http:///x",
+            "https://?q",
+            "https://#f",
+            "http://",
+            "x",
+            "http://a b",
+            "http://a\u{7}b",
+        ] {
+            assert!(url("image_url", &json!(bad)).is_err(), "{bad:?}");
+        }
+        let max = format!("https://x/{}", "a".repeat(2048 - 10));
+        assert_eq!(max.chars().count(), 2048);
+        assert!(url("image_url", &json!(max)).is_ok());
+        assert!(url("image_url", &json!(format!("{max}a"))).is_err());
+    }
+
+    #[test]
+    fn integer_years() {
+        let year = integer(1600);
+        assert_eq!(year("discovery_year", &json!(1905)).unwrap(), 1905);
+        let fractional: Value = serde_json::from_str("1905.0").unwrap();
+        assert!(year("discovery_year", &fractional).is_err());
+        assert!(year("discovery_year", &json!(1599)).is_err());
+        assert!(year("discovery_year", &json!("1905")).is_err());
+        let huge: Value = serde_json::from_str("99999999999").unwrap();
+        assert!(year("discovery_year", &huge).is_err());
+    }
+
+    #[test]
+    fn enums() {
+        let diet = one_of(&["carnivore", "herbivore"]);
+        assert_eq!(diet("diet", &json!("carnivore")).unwrap(), "carnivore");
+        assert!(diet("diet", &json!("Carnivore")).is_err());
+        assert!(diet("diet", &json!("banana")).is_err());
+    }
+
+    #[test]
+    fn truncation() {
+        assert_eq!(truncate("abc", 5), "abc");
+        assert_eq!(truncate(&"ñ".repeat(40), 32), format!("{}…", "ñ".repeat(32)));
+    }
+}
