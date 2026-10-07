@@ -56,6 +56,8 @@ cargo run                                  # run the API
 DATABASE_URL="$TEST_DATABASE_URL" cargo test   # unit + integration tests
 cargo fmt --check                          # formatting
 cargo clippy --all-targets -- -D warnings  # lints
+cargo sqlx prepare -- --all-targets        # after changing a query! macro: regenerate .sqlx/ (dev DATABASE_URL) and commit it
+cargo sqlx prepare --check -- --all-targets   # .sqlx/ matches every query! macro
 ```
 
 Never run plain `cargo test` with the development `DATABASE_URL`: the test harness would write its bookkeeping schema into the development database (the run fails; cleanup in `docs/specs/001-database/quickstart.md` §5).
@@ -93,7 +95,7 @@ A change is done only when:
 
 1. It traces back to an approved spec and task.
 2. Tests were written first and all pass (unit + integration against real PostgreSQL).
-3. `cargo fmt --check` and `cargo clippy -- -D warnings` pass.
+3. `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo sqlx prepare --check -- --all-targets` (committed `.sqlx/` is current) pass.
 4. New/changed endpoints are documented (OpenAPI spec kept in sync).
 5. New queries used by public endpoints are indexed and respect the performance targets.
 6. No secrets, credentials, or `.env` files are committed.
