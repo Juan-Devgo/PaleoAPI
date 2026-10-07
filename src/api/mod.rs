@@ -62,26 +62,65 @@ pub const ROUTES: &[(&str, &[Method])] = &[
         "/periods/{period_id}",
         &[Method::GET, Method::PATCH, Method::DELETE],
     ),
-    ("/taxonomy/domains", &[Method::GET]),
-    ("/taxonomy/domains/{domain_id}", &[Method::GET]),
-    ("/taxonomy/domains/{domain_id}/kingdoms", &[Method::GET]),
+    ("/taxonomy/domains", &[Method::GET, Method::POST]),
+    (
+        "/taxonomy/domains/{domain_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
+    (
+        "/taxonomy/domains/{domain_id}/kingdoms",
+        &[Method::GET, Method::POST],
+    ),
     ("/taxonomy/kingdoms", &[Method::GET]),
-    ("/taxonomy/kingdoms/{kingdom_id}", &[Method::GET]),
-    ("/taxonomy/kingdoms/{kingdom_id}/phyla", &[Method::GET]),
+    (
+        "/taxonomy/kingdoms/{kingdom_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
+    (
+        "/taxonomy/kingdoms/{kingdom_id}/phyla",
+        &[Method::GET, Method::POST],
+    ),
     ("/taxonomy/phyla", &[Method::GET]),
-    ("/taxonomy/phyla/{phylum_id}", &[Method::GET]),
-    ("/taxonomy/phyla/{phylum_id}/classes", &[Method::GET]),
+    (
+        "/taxonomy/phyla/{phylum_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
+    (
+        "/taxonomy/phyla/{phylum_id}/classes",
+        &[Method::GET, Method::POST],
+    ),
     ("/taxonomy/classes", &[Method::GET]),
-    ("/taxonomy/classes/{class_id}", &[Method::GET]),
-    ("/taxonomy/classes/{class_id}/orders", &[Method::GET]),
+    (
+        "/taxonomy/classes/{class_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
+    (
+        "/taxonomy/classes/{class_id}/orders",
+        &[Method::GET, Method::POST],
+    ),
     ("/taxonomy/orders", &[Method::GET]),
-    ("/taxonomy/orders/{order_id}", &[Method::GET]),
-    ("/taxonomy/orders/{order_id}/families", &[Method::GET]),
+    (
+        "/taxonomy/orders/{order_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
+    (
+        "/taxonomy/orders/{order_id}/families",
+        &[Method::GET, Method::POST],
+    ),
     ("/taxonomy/families", &[Method::GET]),
-    ("/taxonomy/families/{family_id}", &[Method::GET]),
-    ("/taxonomy/families/{family_id}/genera", &[Method::GET]),
+    (
+        "/taxonomy/families/{family_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
+    (
+        "/taxonomy/families/{family_id}/genera",
+        &[Method::GET, Method::POST],
+    ),
     ("/taxonomy/genera", &[Method::GET]),
-    ("/taxonomy/genera/{genus_id}", &[Method::GET]),
+    (
+        "/taxonomy/genera/{genus_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
     ("/continents", &[Method::GET]),
     ("/continents/{continent_id}", &[Method::GET]),
     ("/continents/{continent_id}/countries", &[Method::GET]),
@@ -123,23 +162,60 @@ fn routes(cfg: &mut web::ServiceConfig) {
     for rank in taxonomy::RANKS.iter() {
         let base = format!("/taxonomy/{}", rank.plural);
         let item = format!("{base}/{{{}_id}}", rank.singular);
-        cfg.service(web::resource(base.as_str()).route(
-            web::get().to(move |req: HttpRequest, pool: web::Data<PgPool>| {
-                taxonomy::list(rank, req, pool)
-            }),
-        ));
-        cfg.service(web::resource(item.as_str()).route(web::get().to(
-            move |req: HttpRequest, path: web::Path<String>, pool: web::Data<PgPool>| {
-                taxonomy::detail(rank, req, path, pool)
-            },
-        )));
+        let mut list =
+            web::resource(base.as_str()).route(web::get().to(
+                move |req: HttpRequest, pool: web::Data<PgPool>| taxonomy::list(rank, req, pool),
+            ));
+        if rank.parent.is_none() {
+            list = list.route(web::post().to(taxonomy::create_domain));
+        }
+        cfg.service(list);
+        cfg.service(
+            web::resource(item.as_str())
+                .route(web::get().to(
+                    move |req: HttpRequest, path: web::Path<String>, pool: web::Data<PgPool>| {
+                        taxonomy::detail(rank, req, path, pool)
+                    },
+                ))
+                .route(web::patch().to(
+                    move |req: HttpRequest,
+                          path: web::Path<String>,
+                          payload: web::Payload,
+                          pool: web::Data<PgPool>,
+                          gate: web::Data<dyn AdminGate>| {
+                        taxonomy::update(rank, req, path, payload, pool, gate)
+                    },
+                ))
+                .route(web::delete().to(
+                    move |req: HttpRequest,
+                          path: web::Path<String>,
+                          pool: web::Data<PgPool>,
+                          gate: web::Data<dyn AdminGate>| {
+                        taxonomy::delete(rank, req, path, pool, gate)
+                    },
+                )),
+        );
         if let Some(child) = rank.child_rank() {
             let nested = format!("{item}/{}", child.plural);
-            cfg.service(web::resource(nested.as_str()).route(web::get().to(
-                move |req: HttpRequest, path: web::Path<String>, pool: web::Data<PgPool>| {
-                    taxonomy::list_children(child, req, path, pool)
-                },
-            )));
+            cfg.service(
+                web::resource(nested.as_str())
+                    .route(web::get().to(
+                        move |req: HttpRequest,
+                              path: web::Path<String>,
+                              pool: web::Data<PgPool>| {
+                            taxonomy::list_children(child, req, path, pool)
+                        },
+                    ))
+                    .route(web::post().to(
+                        move |req: HttpRequest,
+                              path: web::Path<String>,
+                              payload: web::Payload,
+                              pool: web::Data<PgPool>,
+                              gate: web::Data<dyn AdminGate>| {
+                            taxonomy::create_child(child, req, path, payload, pool, gate)
+                        },
+                    )),
+            );
         }
     }
 

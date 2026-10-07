@@ -7,12 +7,14 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
+use super::auth::AdminGate;
+use super::db_error::{Ctx, Op, map_write};
 use super::error::{ApiError, Resource};
-use super::http::{Many, One, cached_json};
-use super::input::is_slug;
+use super::http::{Many, One, cached_json, created, updated};
+use super::input::{self, Obj, is_slug, slug};
 use super::params::{ListQuery, Pagination, Params, Sort};
 use super::species::card::Summary;
-use super::{paged, read_tx};
+use super::{begin_write, delete_resource, paged, read_tx, write_body};
 
 /// One taxonomy rank.
 #[derive(Debug)]
@@ -40,6 +42,15 @@ pub struct Rank {
     pub dependents_sql: &'static str,
     /// Noun of the dependents in messages: (singular, plural).
     pub dependents_noun: (&'static str, &'static str),
+    /// `INSERT`: `$1` id, `$2` name, `$3` parent id (not for domains).
+    pub insert_sql: &'static str,
+    /// `UPDATE`: `$1` id, `$2` name or `NULL`, `$3` parent id or `NULL` (not for domains).
+    pub update_sql: &'static str,
+    /// Q-W1: lock the row for a `PATCH`.
+    pub lock_update_sql: &'static str,
+    /// Q-W2: lock the row for a `DELETE`.
+    pub lock_delete_sql: &'static str,
+    pub delete_sql: &'static str,
 }
 
 /// Builds a [`Rank`]; `$parent` is `(index, table, column)` for every rank but domains.
@@ -73,6 +84,19 @@ macro_rules! rank {
                 " = $1 ORDER BY c.id LIMIT 5"
             ),
             dependents_noun: ($dnoun, $dnouns),
+            insert_sql: concat!("INSERT INTO ", $plural, " (id, name) VALUES ($1, $2)"),
+            update_sql: concat!(
+                "UPDATE ",
+                $plural,
+                " SET name = COALESCE($2::text, name) WHERE id = $1"
+            ),
+            lock_update_sql: concat!(
+                "SELECT id FROM ",
+                $plural,
+                " WHERE id = $1 FOR NO KEY UPDATE"
+            ),
+            lock_delete_sql: concat!("SELECT id FROM ", $plural, " WHERE id = $1 FOR UPDATE"),
+            delete_sql: concat!("DELETE FROM ", $plural, " WHERE id = $1"),
         }
     };
     ($plural:literal, $singular:literal, $res:ident, parent: ($pidx:expr, $ptable:literal, $pcol:literal),
@@ -111,6 +135,29 @@ macro_rules! rank {
                 " = $1 ORDER BY c.id LIMIT 5"
             ),
             dependents_noun: ($dnoun, $dnouns),
+            insert_sql: concat!(
+                "INSERT INTO ",
+                $plural,
+                " (id, name, ",
+                $pcol,
+                ") VALUES ($1, $2, $3)"
+            ),
+            update_sql: concat!(
+                "UPDATE ",
+                $plural,
+                " SET name = COALESCE($2::text, name), ",
+                $pcol,
+                " = COALESCE($3::text, ",
+                $pcol,
+                ") WHERE id = $1"
+            ),
+            lock_update_sql: concat!(
+                "SELECT id FROM ",
+                $plural,
+                " WHERE id = $1 FOR NO KEY UPDATE"
+            ),
+            lock_delete_sql: concat!("SELECT id FROM ", $plural, " WHERE id = $1 FOR UPDATE"),
+            delete_sql: concat!("DELETE FROM ", $plural, " WHERE id = $1"),
         }
     };
 }
@@ -354,4 +401,174 @@ pub async fn detail(
         Some(data) => Ok(cached_json(&req, &One { data })),
         None => Err(ApiError::not_found(rank.resource, &id)),
     }
+}
+
+// ---------------------------------------------------------------- write handlers
+
+const ID_IMMUTABLE: &str =
+    "id cannot be changed. Remove it from the body; create a new resource instead.";
+
+async fn create(
+    rank: &'static Rank,
+    parent_id: Option<String>,
+    req: HttpRequest,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let mut tx = begin_write(&pool).await?;
+    if let (Some(parent), Some(pid)) = (rank.parent_rank(), &parent_id)
+        && (!is_slug(pid) || !rank_exists(&mut tx, parent, pid).await?)
+    {
+        return Err(ApiError::not_found(parent.resource, pid));
+    }
+    let mut o = Obj::new(body)?;
+    if let Some(col) = rank.parent_col {
+        o.forbid(
+            col,
+            &format!("{col} must not be sent: the parent comes from the path."),
+        );
+    }
+    let id = o.required("id", slug);
+    let name = o.required("name", input::name);
+    o.finish()?;
+    let (Some(id), Some(name)) = (id, name) else {
+        return Err(ApiError::internal());
+    };
+    let ctx = Ctx::new(rank.resource, &id, Op::Insert).name(Some(&name));
+    let mut insert = sqlx::query(rank.insert_sql).bind(&id).bind(&name);
+    if let Some(pid) = &parent_id {
+        insert = insert.bind(pid);
+    }
+    insert
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| map_write(&e, &ctx))?;
+    let item = rank_by_id(&mut tx, rank, &id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    tx.commit().await.map_err(|e| map_write(&e, &ctx))?;
+    Ok(created(
+        format!("/api/v1/taxonomy/{}/{id}", rank.plural),
+        &One { data: item },
+    ))
+}
+
+/// `POST /taxonomy/domains`.
+pub async fn create_domain(
+    req: HttpRequest,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    create(&RANKS[0], None, req, payload, pool, gate).await
+}
+
+/// `POST /taxonomy/{parent_rank}/{parent_id}/{rank}`.
+pub async fn create_child(
+    rank: &'static Rank,
+    req: HttpRequest,
+    path: web::Path<String>,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    create(rank, Some(path.into_inner()), req, payload, pool, gate).await
+}
+
+/// `PATCH /taxonomy/{rank}/{id}`: rename and reparent.
+pub async fn update(
+    rank: &'static Rank,
+    req: HttpRequest,
+    path: web::Path<String>,
+    payload: web::Payload,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let id = path.into_inner();
+    if !is_slug(&id) {
+        return Err(ApiError::not_found(rank.resource, &id));
+    }
+    let mut tx = begin_write(&pool).await?;
+    let locked = sqlx::query(rank.lock_update_sql)
+        .bind(&id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if locked.is_none() {
+        return Err(ApiError::not_found(rank.resource, &id));
+    }
+    let mut o = Obj::new(body)?;
+    o.forbid("id", ID_IMMUTABLE);
+    o.require_some_field();
+    let name = o.patch("name", input::name);
+    let parent_id = match (rank.parent_col, rank.parent_rank()) {
+        (Some(col), Some(parent)) => {
+            let value = o.patch(col, slug);
+            if let Some(Some(pid)) = &value
+                && !rank_exists(&mut tx, parent, pid).await?
+            {
+                o.push(
+                    col,
+                    format!(
+                        "{col} '{}' does not exist. Send the id of an existing {}.",
+                        input::truncate(pid, input::ECHO),
+                        parent.resource.noun()
+                    ),
+                );
+            }
+            value.flatten()
+        }
+        _ => None,
+    };
+    o.finish()?;
+    let name = name.flatten();
+    let ctx = Ctx::new(rank.resource, &id, Op::Update).name(name.as_deref());
+    let mut update = sqlx::query(rank.update_sql).bind(&id).bind(&name);
+    if rank.parent_col.is_some() {
+        update = update.bind(&parent_id);
+    }
+    update
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| map_write(&e, &ctx))?;
+    let item = rank_by_id(&mut tx, rank, &id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    tx.commit().await.map_err(|e| map_write(&e, &ctx))?;
+    Ok(updated(&One { data: item }))
+}
+
+/// `DELETE /taxonomy/{rank}/{id}`.
+pub async fn delete(
+    rank: &'static Rank,
+    req: HttpRequest,
+    path: web::Path<String>,
+    pool: web::Data<PgPool>,
+    gate: web::Data<dyn AdminGate>,
+) -> Result<HttpResponse, ApiError> {
+    let id = path.into_inner();
+    delete_resource(
+        &req,
+        gate.get_ref(),
+        &pool,
+        rank.resource,
+        &id,
+        async |c: &mut sqlx::PgConnection| {
+            Ok(sqlx::query(rank.lock_delete_sql)
+                .bind(&id)
+                .fetch_optional(c)
+                .await?
+                .is_some())
+        },
+        async |c: &mut sqlx::PgConnection| {
+            sqlx::query(rank.delete_sql)
+                .bind(&id)
+                .execute(c)
+                .await
+                .map(|_| ())
+        },
+    )
+    .await
 }
