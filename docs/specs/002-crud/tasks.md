@@ -57,16 +57,16 @@
 
 ## Phase 6: US6 + US5 — Admin writes and actionable errors
 
-- [ ] T041 [P] [US6] Write write-contract tests (plan §Cases `global.rs` writes) in `tests/api/global.rs`
-- [ ] T042 [US5] Write leak and dispatch tests (plan §Cases `global.rs` leaks) in `tests/api/global.rs`
-- [ ] T043 [P] [US6] Write era/period write tests (plan §Cases `geologic_time.rs` writes) in `tests/api/geologic_time.rs`
-- [ ] T044 [P] [US6] Write rank write tests (plan §Cases `taxonomy.rs` writes) in `tests/api/taxonomy.rs`
-- [ ] T045 [P] [US6] Write continent/country write tests (plan §Cases `geography.rs` writes) in `tests/api/geography.rs`
-- [ ] T046 [P] [US6] Write species write tests (plan §Cases `species.rs` writes) in `tests/api/species.rs`
-- [ ] T047 [P] [US6] Write error-map completeness test (plan §Cases `error_map.rs`) in `tests/api/error_map.rs`
-- [ ] T048 [P] [US6] Write case (h) deny (plan §Cases `startup.rs` (h) deny) in `tests/startup.rs`
-- [ ] T065 [P] [US6] Write range-merge and attribution unit tests (plan §Cases `geologic_time.rs` (unit)) in `src/api/geologic_time.rs`
-- [ ] T066 [P] [US6] Write `size` validator unit tests (plan §Cases `species/input.rs` (unit)) in `src/api/species/input.rs`
+- [X] T041 [P] [US6] Write write-contract tests (plan §Cases `global.rs` writes) in `tests/api/global.rs`
+- [X] T042 [US5] Write leak and dispatch tests (plan §Cases `global.rs` leaks) in `tests/api/global.rs`
+- [X] T043 [P] [US6] Write era/period write tests (plan §Cases `geologic_time.rs` writes) in `tests/api/geologic_time.rs`
+- [X] T044 [P] [US6] Write rank write tests (plan §Cases `taxonomy.rs` writes) in `tests/api/taxonomy.rs`
+- [X] T045 [P] [US6] Write continent/country write tests (plan §Cases `geography.rs` writes) in `tests/api/geography.rs`
+- [X] T046 [P] [US6] Write species write tests (plan §Cases `species.rs` writes) in `tests/api/species.rs`
+- [X] T047 [P] [US6] Write error-map completeness test (plan §Cases `error_map.rs`) in `tests/api/error_map.rs`
+- [X] T048 [P] [US6] Write case (h) deny (plan §Cases `startup.rs` (h) deny) in `tests/startup.rs`
+- [X] T065 [P] [US6] Write range-merge and attribution unit tests (plan §Cases `geologic_time.rs` (unit)) in `src/api/geologic_time.rs`
+- [X] T066 [P] [US6] Write `size` validator unit tests (plan §Cases `species/input.rs` (unit)) in `src/api/species/input.rs`
 - [ ] T049 [US6] Implement SQLSTATE + constraint map, `is_mapped`, dependents lookup and message (data-model §4, §5), `500` stderr line (plan §Write path), then run `cargo sqlx prepare -- --all-targets`, in `src/api/db_error.rs`, `.sqlx/`
 - [ ] T050 [P] [US6] Implement era and period writes (plan §Write path; data-model §2, §3, §6), then run `cargo sqlx prepare -- --all-targets`, in `src/api/geologic_time.rs`, `.sqlx/`
 - [ ] T051 [P] [US6] Implement rank writes: `POST /domains`, nested create, reparent, delete (plan §Write path), then run `cargo sqlx prepare -- --all-targets`, in `src/api/taxonomy.rs`, `.sqlx/`

@@ -6,7 +6,7 @@ use serde::Serialize;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::decimal::Decimal;
-use super::error::{ApiError, Resource};
+use super::error::{ApiError, FieldError, Resource};
 use super::http::{Many, One, cached_json};
 use super::input::is_slug;
 use super::params::{ListQuery, Pagination, Params, Sort};
@@ -311,5 +311,198 @@ pub async fn get_period(
             },
         )),
         None => Err(ApiError::not_found(Resource::Period, &id)),
+    }
+}
+
+// ---------------------------------------------------------------- range rules (pure)
+
+/// Which range fields a request body sent, `null` included (data-model §6).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Sent {
+    pub start_mya: bool,
+    pub end_mya: bool,
+    pub era_id: bool,
+}
+
+/// The resulting range: sent values over stored ones (spec §4.10).
+pub fn merge_range(
+    _stored: (Decimal, Decimal),
+    _start: Option<Decimal>,
+    _end: Option<Decimal>,
+) -> (Decimal, Decimal) {
+    todo!()
+}
+
+/// `start_mya > end_mya`, attributed per data-model §6.
+pub fn range_problem(_start: &Decimal, _end: &Decimal, _sent: Sent) -> Option<FieldError> {
+    todo!()
+}
+
+/// Field of an era or period overlap (data-model §6).
+pub fn overlap_field(_sent: Sent) -> &'static str {
+    todo!()
+}
+
+/// Fields of a period outside its era (data-model §6); empty when inside.
+pub fn outside_era_fields(
+    _period: (&Decimal, &Decimal),
+    _era: (&Decimal, &Decimal),
+    _sent: Sent,
+) -> Vec<&'static str> {
+    todo!()
+}
+
+/// Sides of an era range that exclude some of its periods (data-model §6).
+pub fn excluded_sides(
+    _era: (&Decimal, &Decimal),
+    _periods: &[(Decimal, Decimal)],
+) -> Vec<&'static str> {
+    todo!()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    fn d(text: &str) -> Decimal {
+        Decimal::parse(&serde_json::Number::from_str(text).unwrap(), 3).unwrap()
+    }
+
+    const NONE: Sent = Sent {
+        start_mya: false,
+        end_mya: false,
+        era_id: false,
+    };
+    const START: Sent = Sent {
+        start_mya: true,
+        ..NONE
+    };
+    const END: Sent = Sent {
+        end_mya: true,
+        ..NONE
+    };
+    const BOTH: Sent = Sent {
+        start_mya: true,
+        end_mya: true,
+        era_id: false,
+    };
+    const ERA: Sent = Sent {
+        era_id: true,
+        ..NONE
+    };
+    const ERA_START: Sent = Sent {
+        era_id: true,
+        start_mya: true,
+        end_mya: false,
+    };
+
+    #[test]
+    fn merged_range_takes_sent_values_over_stored() {
+        let stored = (d("201.4"), d("145"));
+        assert_eq!(merge_range(stored.clone(), None, None), stored);
+        assert_eq!(
+            merge_range(stored.clone(), Some(d("200")), None),
+            (d("200"), d("145"))
+        );
+        assert_eq!(
+            merge_range(stored.clone(), None, Some(d("150"))),
+            (d("201.4"), d("150"))
+        );
+        assert_eq!(
+            merge_range(stored, Some(d("10")), Some(d("5"))),
+            (d("10"), d("5"))
+        );
+    }
+
+    #[test]
+    fn start_must_be_greater_than_end_after_merge() {
+        assert_eq!(range_problem(&d("201.4"), &d("145"), BOTH), None);
+        for (start, end) in [("145", "145"), ("145", "201.4")] {
+            let e = range_problem(&d(start), &d(end), BOTH).unwrap();
+            assert_eq!(e.field, "end_mya");
+            assert!(
+                e.message.contains(start) && e.message.contains(end),
+                "{}",
+                e.message
+            );
+            assert_eq!(
+                range_problem(&d(start), &d(end), END).unwrap().field,
+                "end_mya"
+            );
+            assert_eq!(
+                range_problem(&d(start), &d(end), START).unwrap().field,
+                "start_mya"
+            );
+            assert_eq!(
+                range_problem(&d(start), &d(end), ERA_START).unwrap().field,
+                "start_mya"
+            );
+            assert_eq!(
+                range_problem(&d(start), &d(end), NONE).unwrap().field,
+                "end_mya"
+            );
+        }
+    }
+
+    #[test]
+    fn overlap_attribution() {
+        assert_eq!(overlap_field(BOTH), "start_mya");
+        assert_eq!(overlap_field(START), "start_mya");
+        assert_eq!(overlap_field(END), "end_mya");
+        assert_eq!(overlap_field(ERA), "start_mya");
+        assert_eq!(overlap_field(NONE), "start_mya");
+    }
+
+    #[test]
+    fn period_outside_its_era() {
+        let era = (&d("251.902"), &d("66"));
+        let inside = [("251.902", "66"), ("200", "100")];
+        for (s, e) in inside {
+            for sent in [NONE, START, END, BOTH, ERA, ERA_START] {
+                assert!(outside_era_fields((&d(s), &d(e)), era, sent).is_empty());
+            }
+        }
+        // only era_id sent: the move is the problem
+        assert_eq!(
+            outside_era_fields((&d("300"), &d("10")), era, ERA),
+            ["era_id"]
+        );
+        // range fields sent: one detail per violated side
+        for sent in [START, END, BOTH, ERA_START, NONE] {
+            assert_eq!(
+                outside_era_fields((&d("300"), &d("100")), era, sent),
+                ["start_mya"]
+            );
+            assert_eq!(
+                outside_era_fields((&d("200"), &d("10")), era, sent),
+                ["end_mya"]
+            );
+            assert_eq!(
+                outside_era_fields((&d("300"), &d("10")), era, sent),
+                ["start_mya", "end_mya"]
+            );
+        }
+    }
+
+    #[test]
+    fn era_excluding_its_periods() {
+        let periods = [(d("251.902"), d("201.4")), (d("145"), d("66"))];
+        assert!(excluded_sides((&d("251.902"), &d("66")), &periods).is_empty());
+        assert!(excluded_sides((&d("260"), &d("60")), &periods).is_empty());
+        assert_eq!(
+            excluded_sides((&d("240"), &d("66")), &periods),
+            ["start_mya"]
+        );
+        assert_eq!(
+            excluded_sides((&d("251.902"), &d("100")), &periods),
+            ["end_mya"]
+        );
+        assert_eq!(
+            excluded_sides((&d("240"), &d("100")), &periods),
+            ["start_mya", "end_mya"]
+        );
+        assert!(excluded_sides((&d("10"), &d("5")), &[]).is_empty());
     }
 }

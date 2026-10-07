@@ -153,3 +153,284 @@ async fn country_continents_are_sorted_by_name(pool_opts: PgPoolOptions, opts: P
     let japan = get(&app, "/api/v1/countries/japan").await.json()["data"].clone();
     assert_eq!(japan["continents"], json!([asia()]));
 }
+
+// ---------------------------------------------------------------- writes
+
+use actix_web::http::Method;
+
+#[sqlx::test]
+async fn continent_create_patch_delete(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
+    let app = app(pool_opts, opts).await;
+    seed_world(&app.pool).await;
+    for (body, fields) in [
+        (
+            json!({ "id": "x1", "name": "X", "type": "ancient" }),
+            vec!["type"],
+        ),
+        (json!({ "id": "x1", "name": "X" }), vec!["type"]),
+        (
+            json!({ "id": "x1", "name": "X", "type": null }),
+            vec!["type"],
+        ),
+        (
+            json!({ "id": "x1", "name": "X", "type": "Modern" }),
+            vec!["type"],
+        ),
+    ] {
+        assert_details(
+            &send(&app, Method::POST, "/api/v1/continents", body).await,
+            &fields,
+        );
+    }
+    let resp = send(
+        &app,
+        Method::POST,
+        "/api/v1/continents",
+        json!({ "id": "gondwana", "name": "Gondwana", "type": "prehistoric" }),
+    )
+    .await;
+    assert_eq!(resp.status.as_u16(), 201, "{}", resp.text());
+    assert_eq!(resp.header("location"), Some("/api/v1/continents/gondwana"));
+    assert_eq!(
+        resp.json(),
+        get(&app, "/api/v1/continents/gondwana").await.json()
+    );
+    assert_error(
+        &send(
+            &app,
+            Method::POST,
+            "/api/v1/continents",
+            json!({ "id": "x2", "name": "africa", "type": "modern" }),
+        )
+        .await,
+        409,
+        "CONTINENT_ALREADY_EXISTS",
+    );
+
+    // modern → prehistoric is blocked while countries are linked (AC 6.4.3)
+    let resp = send(
+        &app,
+        Method::PATCH,
+        "/api/v1/continents/asia",
+        json!({ "type": "prehistoric" }),
+    )
+    .await;
+    assert_details(&resp, &["type"]);
+    assert!(
+        resp.text().contains("egypt") && resp.text().contains("japan"),
+        "{}",
+        resp.text()
+    );
+    assert_eq!(
+        get(&app, "/api/v1/continents/asia").await.json()["data"]["type"],
+        "modern"
+    );
+    let resp = send(
+        &app,
+        Method::PATCH,
+        "/api/v1/continents/gondwana",
+        json!({ "type": "modern", "name": "Gondwanaland" }),
+    )
+    .await;
+    assert_eq!(resp.status.as_u16(), 200, "{}", resp.text());
+    assert_eq!(
+        resp.json(),
+        json!({ "data": { "id": "gondwana", "name": "Gondwanaland", "type": "modern" } })
+    );
+    let resp = send(
+        &app,
+        Method::PATCH,
+        "/api/v1/continents/gondwana",
+        json!({ "type": "prehistoric" }),
+    )
+    .await;
+    assert_eq!(resp.status.as_u16(), 200, "{}", resp.text());
+
+    // delete protection: countries and species (AC 6.4.4)
+    let resp = delete(&app, "/api/v1/continents/asia").await;
+    assert_error(&resp, 409, "CONTINENT_HAS_DEPENDENTS");
+    assert!(resp.text().contains("2 countries"), "{}", resp.text());
+    let (genus, period) = seed_base(&app.pool, "g").await;
+    species_row(&app.pool, "rex", &genus, &period, "Rex", "Rex rex", None).await;
+    exec(
+        &app.pool,
+        "INSERT INTO species_continents VALUES ('rex', 'pangaea')",
+    )
+    .await
+    .unwrap();
+    let resp = delete(&app, "/api/v1/continents/pangaea").await;
+    assert_error(&resp, 409, "CONTINENT_HAS_DEPENDENTS");
+    assert!(
+        resp.text().contains("1 species") && resp.text().contains("rex"),
+        "{}",
+        resp.text()
+    );
+    assert_eq!(
+        delete(&app, "/api/v1/continents/laurasia")
+            .await
+            .status
+            .as_u16(),
+        204
+    );
+}
+
+#[sqlx::test]
+async fn country_continent_rules(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
+    let app = app(pool_opts, opts).await;
+    seed_world(&app.pool).await;
+    let many: Vec<String> = (0..11).map(|i| format!("m{i:02}")).collect();
+    let mut values = Vec::new();
+    for id in &many {
+        values.push(format!("('{id}', 'Modern {id}', 'modern')"));
+    }
+    exec(
+        &app.pool,
+        format!("INSERT INTO continents VALUES {}", values.join(", ")),
+    )
+    .await
+    .unwrap();
+    let country = |ids: Value| json!({ "id": "chad", "name": "Chad", "continent_ids": ids });
+    for (body, fields) in [
+        (country(json!([])), vec!["continent_ids"]),
+        (country(json!(["pangaea"])), vec!["continent_ids"]),
+        (
+            country(json!(["africa", "laurasia"])),
+            vec!["continent_ids"],
+        ),
+        (country(json!(["nope-land"])), vec!["continent_ids"]),
+        (country(json!(["africa", "africa"])), vec!["continent_ids"]),
+        (country(json!(many)), vec!["continent_ids"]),
+        (country(json!(null)), vec!["continent_ids"]),
+        (
+            json!({ "id": "chad", "name": "Chad" }),
+            vec!["continent_ids"],
+        ),
+        (
+            json!({ "id": "chad", "name": "Chad", "continents": [] , "continent_ids": ["africa"] }),
+            vec!["continents"],
+        ),
+    ] {
+        assert_details(
+            &send(&app, Method::POST, "/api/v1/countries", body).await,
+            &fields,
+        );
+    }
+    let resp = send(
+        &app,
+        Method::POST,
+        "/api/v1/countries",
+        country(json!(["pangaea"])),
+    )
+    .await;
+    assert!(resp.text().contains("prehistoric"), "{}", resp.text());
+
+    let resp = send(
+        &app,
+        Method::POST,
+        "/api/v1/countries",
+        country(json!(many[..10])),
+    )
+    .await;
+    assert_eq!(resp.status.as_u16(), 201, "{}", resp.text());
+    assert_eq!(resp.header("location"), Some("/api/v1/countries/chad"));
+    assert_eq!(
+        resp.json()["data"]["continents"].as_array().unwrap().len(),
+        10
+    );
+    assert_eq!(
+        resp.json(),
+        get(&app, "/api/v1/countries/chad").await.json()
+    );
+
+    // PATCH replaces the whole list
+    let resp = send(
+        &app,
+        Method::PATCH,
+        "/api/v1/countries/chad",
+        json!({ "continent_ids": ["asia", "africa"] }),
+    )
+    .await;
+    assert_eq!(resp.status.as_u16(), 200, "{}", resp.text());
+    assert_eq!(
+        resp.json()["data"]["continents"],
+        json!([
+            { "id": "africa", "name": "Africa", "type": "modern" },
+            { "id": "asia", "name": "Asia", "type": "modern" },
+        ])
+    );
+    assert!(ids(&get(&app, "/api/v1/continents/m00/countries").await).is_empty());
+    for body in [
+        json!({ "continent_ids": [] }),
+        json!({ "continent_ids": null }),
+        json!({ "continent_ids": ["pangaea"] }),
+    ] {
+        assert_details(
+            &send(&app, Method::PATCH, "/api/v1/countries/chad", body).await,
+            &["continent_ids"],
+        );
+    }
+    let resp = send(
+        &app,
+        Method::PATCH,
+        "/api/v1/countries/chad",
+        json!({ "name": "Tchad" }),
+    )
+    .await;
+    assert_eq!(
+        resp.json()["data"]["continents"].as_array().unwrap().len(),
+        2
+    );
+    assert_error(
+        &send(
+            &app,
+            Method::POST,
+            "/api/v1/countries",
+            json!({ "id": "chad2", "name": "TCHAD", "continent_ids": ["africa"] }),
+        )
+        .await,
+        409,
+        "COUNTRY_ALREADY_EXISTS",
+    );
+}
+
+#[sqlx::test]
+async fn country_delete(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
+    let app = app(pool_opts, opts).await;
+    seed_world(&app.pool).await;
+    let (genus, period) = seed_base(&app.pool, "g").await;
+    species_row(&app.pool, "rex", &genus, &period, "Rex", "Rex rex", None).await;
+    exec(
+        &app.pool,
+        "INSERT INTO species_countries VALUES ('rex', 'japan')",
+    )
+    .await
+    .unwrap();
+    let resp = delete(&app, "/api/v1/countries/japan").await;
+    assert_error(&resp, 409, "COUNTRY_HAS_DEPENDENTS");
+    assert!(
+        resp.text().contains("1 species") && resp.text().contains("rex"),
+        "{}",
+        resp.text()
+    );
+
+    assert_eq!(
+        delete(&app, "/api/v1/countries/egypt")
+            .await
+            .status
+            .as_u16(),
+        204
+    );
+    assert_eq!(
+        ids(&get(&app, "/api/v1/continents/asia/countries").await),
+        ["japan"]
+    );
+    assert_eq!(
+        ids(&get(&app, "/api/v1/continents/africa/countries").await),
+        ["kenya"]
+    );
+    assert_error(
+        &get(&app, "/api/v1/countries/egypt").await,
+        404,
+        "COUNTRY_NOT_FOUND",
+    );
+}

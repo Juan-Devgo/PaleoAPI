@@ -72,7 +72,8 @@ impl Resp {
     }
 }
 
-type Call = dyn Fn(TestRequest) -> Pin<Box<dyn Future<Output = Resp>>>;
+/// `(request, stream without Content-Length)`.
+type Call = dyn Fn(TestRequest, bool) -> Pin<Box<dyn Future<Output = Resp>>>;
 
 /// The app under test and its pool (for seeding and checks).
 pub struct TestApp {
@@ -82,7 +83,12 @@ pub struct TestApp {
 
 impl TestApp {
     pub async fn call(&self, req: TestRequest) -> Resp {
-        (self.call)(req).await
+        (self.call)(req, false).await
+    }
+
+    /// Sends the body without a declared length (`Transfer-Encoding: chunked`).
+    pub async fn call_chunked(&self, req: TestRequest) -> Resp {
+        (self.call)(req, true).await
     }
 }
 
@@ -95,10 +101,18 @@ pub async fn app(pool_opts: PgPoolOptions, connect_opts: PgConnectOptions) -> Te
     let svc = test::init_service(paleo_api::api::app(pool.clone(), Arc::new(TestGate))).await;
     let svc = Rc::new(svc);
     TestApp {
-        call: Box::new(move |req: TestRequest| {
+        call: Box::new(move |req: TestRequest, chunked: bool| {
             let svc = Rc::clone(&svc);
             Box::pin(async move {
-                let res = test::call_service(&*svc, req.to_request()).await;
+                let mut req = req.to_request();
+                if chunked {
+                    req.headers_mut().remove(header::CONTENT_LENGTH);
+                    req.headers_mut().insert(
+                        header::TRANSFER_ENCODING,
+                        header::HeaderValue::from_static("chunked"),
+                    );
+                }
+                let res = test::call_service(&*svc, req).await;
                 let status = res.status();
                 let headers = res.headers().clone();
                 let body = test::read_body(res).await;
