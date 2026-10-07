@@ -86,6 +86,6 @@
 
 - [X] T060 Write OpenAPI drift test (plan §Cases `openapi.rs`) in `tests/api/openapi.rs`
 - [X] T061 Publish `contracts/openapi.yaml`, reconciled with `ROUTES`, as `docs/openapi.yaml`
-- [ ] T062 Run `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`; fix findings in `src/`, `tests/`
+- [X] T062 Run `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`; fix findings in `src/`, `tests/`
 - [ ] T063 Run `cargo sqlx prepare --check -- --all-targets` and full test suite (quickstart §3); commit `.sqlx/`
 - [ ] T064 Final validation: quickstart §1–§2 manual scenarios; fix doc drift in `docs/specs/002-crud/quickstart.md`; record `performance` p95 per shape in the PR description
