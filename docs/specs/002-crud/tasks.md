@@ -96,4 +96,4 @@
 - [x] T068 Record T059 query shapes in plan §Read path and data-model §3
 - [x] T069 Document error_map.rs exclusions in data-model §4
 - [x] T070 Record shared fixed_query! macro in plan §Project Structure
-- [ ] T071 Push branch and open PR with performance p95 per shape in description
+- [X] T071 Push branch and open PR with performance p95 per shape in description
