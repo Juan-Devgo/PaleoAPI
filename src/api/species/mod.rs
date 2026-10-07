@@ -49,7 +49,7 @@ const KNOWN: &[&str] = &[
 
 fixed_query! {
     /// Q-S13: one species by id.
-    pub const SPECIES_BY_ID_SQL = "SELECT s.id, s.name, s.scientific_name, s.diet, s.description, \
+    pub const SPECIES_BY_ID_SQL = "SELECT s.id, s.genus_id, s.name, s.scientific_name, s.diet, s.description, \
             s.discovery_year, s.image_url, s.length_min_m, s.length_max_m, s.height_min_m, \
             s.height_max_m, s.weight_min_kg, s.weight_max_kg \
         FROM species s WHERE s.id = $1";

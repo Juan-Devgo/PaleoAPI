@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT sp.species_id, p.id, p.name, e.id AS era_id, e.name AS era_name FROM species_periods sp JOIN periods p ON p.id = sp.period_id JOIN eras e ON e.id = p.era_id WHERE sp.species_id = ANY($1::text[]) ORDER BY p.start_mya DESC, p.id",
+  "query": "SELECT sp.species_id, p.id, p.name, e.id AS era_id, e.name AS era_name FROM unnest($1::text[]) AS u(id) CROSS JOIN LATERAL (SELECT l.species_id, l.period_id FROM species_periods l WHERE l.species_id = u.id OFFSET 0) sp JOIN periods p ON p.id = sp.period_id JOIN eras e ON e.id = p.era_id ORDER BY p.start_mya DESC, p.id",
   "describe": {
     "columns": [
       {
@@ -72,5 +72,5 @@
       false
     ]
   },
-  "hash": "da9060fedd3690c2985a6a1f49ebc0f7c120f8c7dd8e56314c0d5ad57c4d1ac8"
+  "hash": "847d4b33b94bc0647873965543abe824d6453b96f1316c7ae8753fd04597737f"
 }

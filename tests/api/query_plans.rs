@@ -482,8 +482,8 @@ async fn detail_lookups_and_embeddings(pool_opts: PgPoolOptions, opts: PgConnect
         (
             "Q-S12 lineage".into(),
             SPECIES_TAXONOMY_SQL,
-            vec![species.clone()],
-            vec!["species_pk"],
+            vec![texts(&["genus-1", "genus-2", "genus-42", "genus-4999"])],
+            vec!["genera_pk"],
         ),
         (
             "Q-S12 periods".into(),

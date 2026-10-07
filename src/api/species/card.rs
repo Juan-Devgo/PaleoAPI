@@ -80,6 +80,7 @@ pub struct SpeciesCard {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SpeciesRow {
     pub id: String,
+    pub genus_id: String,
     pub name: String,
     pub scientific_name: String,
     pub diet: String,
@@ -95,13 +96,12 @@ pub struct SpeciesRow {
 }
 
 /// The column list of [`SpeciesRow`], qualified with alias `s`.
-pub const SPECIES_COLUMNS: &str = "s.id, s.name, s.scientific_name, s.diet, s.description, \
+pub const SPECIES_COLUMNS: &str = "s.id, s.genus_id, s.name, s.scientific_name, s.diet, s.description, \
      s.discovery_year, s.image_url, s.length_min_m, s.length_max_m, s.height_min_m, \
      s.height_max_m, s.weight_min_kg, s.weight_max_kg";
 
 #[derive(Debug)]
 struct TaxonomyRow {
-    species_id: String,
     domain_id: String,
     domain_name: String,
     kingdom_id: String,
@@ -143,31 +143,35 @@ struct CountryRow {
 }
 
 fixed_query! {
-    /// Q-S12: lineage of a page of species, PK lookups from `genera` up to `domains`.
-    pub const SPECIES_TAXONOMY_SQL = "SELECT s.id AS species_id, \
+    /// Q-S12: lineage of the genera of a page of species, PK lookups from `genera` up to
+    /// `domains`.
+    pub const SPECIES_TAXONOMY_SQL = "SELECT \
             d.id AS domain_id, d.name AS domain_name, k.id AS kingdom_id, k.name AS kingdom_name, \
             p.id AS phylum_id, p.name AS phylum_name, c.id AS class_id, c.name AS class_name, \
             o.id AS order_id, o.name AS order_name, f.id AS family_id, f.name AS family_name, \
             g.id AS genus_id, g.name AS genus_name \
-        FROM species s \
-        JOIN genera g ON g.id = s.genus_id \
+        FROM genera g \
         JOIN families f ON f.id = g.family_id \
         JOIN orders o ON o.id = f.order_id \
         JOIN classes c ON c.id = o.class_id \
         JOIN phyla p ON p.id = c.phylum_id \
         JOIN kingdoms k ON k.id = p.kingdom_id \
         JOIN domains d ON d.id = k.domain_id \
-        WHERE s.id = ANY($1::text[])";
-    fn taxonomy_rows(ids: &[String]) -> fetch_all TaxonomyRow;
+        WHERE g.id = ANY($1::text[])";
+    fn taxonomy_rows(genus_ids: &[String]) -> fetch_all TaxonomyRow;
 }
 
 fixed_query! {
-    /// Q-S12: periods of a page of species with their era, oldest first.
+    /// Q-S12: periods of a page of species with their era, oldest first. One
+    /// `species_periods_pk` probe per species id: with `species_id = ANY($1)` the
+    /// PostgreSQL 18 planner prefers a skip scan of `species_periods_period_idx`, which
+    /// reads the whole index (T059).
     pub const SPECIES_PERIODS_SQL = "SELECT sp.species_id, p.id, p.name, e.id AS era_id, e.name AS era_name \
-        FROM species_periods sp \
+        FROM unnest($1::text[]) AS u(id) \
+        CROSS JOIN LATERAL (SELECT l.species_id, l.period_id FROM species_periods l \
+                            WHERE l.species_id = u.id OFFSET 0) sp \
         JOIN periods p ON p.id = sp.period_id \
         JOIN eras e ON e.id = p.era_id \
-        WHERE sp.species_id = ANY($1::text[]) \
         ORDER BY p.start_mya DESC, p.id";
     fn period_rows(ids: &[String]) -> fetch_all PeriodRow;
 }
@@ -231,14 +235,17 @@ pub async fn load_cards(
         return Ok(Vec::new());
     }
     let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let mut genus_ids: Vec<String> = rows.iter().map(|r| r.genus_id.clone()).collect();
+    genus_ids.sort_unstable();
+    genus_ids.dedup();
 
-    let mut lineage: HashMap<String, Taxonomy> = taxonomy_rows(conn, &ids)
+    let lineage: HashMap<String, Taxonomy> = taxonomy_rows(conn, &genus_ids)
         .await?
         .into_iter()
         .map(|t| {
             let s = |id: String, name: String| Summary { id, name };
             (
-                t.species_id,
+                t.genus_id.clone(),
                 Taxonomy {
                     domain: s(t.domain_id, t.domain_name),
                     kingdom: s(t.kingdom_id, t.kingdom_name),
@@ -284,7 +291,7 @@ pub async fn load_cards(
     let mut cards = Vec::with_capacity(rows.len());
     for mut row in rows {
         // Every species has a genus (NOT NULL FK), so the lineage row exists in this snapshot.
-        let Some(taxonomy) = lineage.remove(&row.id) else {
+        let Some(taxonomy) = lineage.get(&row.genus_id).cloned() else {
             return Err(sqlx::Error::RowNotFound);
         };
         let size = size(&mut row);

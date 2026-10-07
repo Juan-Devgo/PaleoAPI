@@ -1,21 +1,10 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id AS species_id, d.id AS domain_id, d.name AS domain_name, k.id AS kingdom_id, k.name AS kingdom_name, p.id AS phylum_id, p.name AS phylum_name, c.id AS class_id, c.name AS class_name, o.id AS order_id, o.name AS order_name, f.id AS family_id, f.name AS family_name, g.id AS genus_id, g.name AS genus_name FROM species s JOIN genera g ON g.id = s.genus_id JOIN families f ON f.id = g.family_id JOIN orders o ON o.id = f.order_id JOIN classes c ON c.id = o.class_id JOIN phyla p ON p.id = c.phylum_id JOIN kingdoms k ON k.id = p.kingdom_id JOIN domains d ON d.id = k.domain_id WHERE s.id = ANY($1::text[])",
+  "query": "SELECT d.id AS domain_id, d.name AS domain_name, k.id AS kingdom_id, k.name AS kingdom_name, p.id AS phylum_id, p.name AS phylum_name, c.id AS class_id, c.name AS class_name, o.id AS order_id, o.name AS order_name, f.id AS family_id, f.name AS family_name, g.id AS genus_id, g.name AS genus_name FROM genera g JOIN families f ON f.id = g.family_id JOIN orders o ON o.id = f.order_id JOIN classes c ON c.id = o.class_id JOIN phyla p ON p.id = c.phylum_id JOIN kingdoms k ON k.id = p.kingdom_id JOIN domains d ON d.id = k.domain_id WHERE g.id = ANY($1::text[])",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "species_id",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "species",
-            "name": "id"
-          }
-        }
-      },
-      {
-        "ordinal": 1,
         "name": "domain_id",
         "type_info": "Text",
         "origin": {
@@ -26,7 +15,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 1,
         "name": "domain_name",
         "type_info": "Text",
         "origin": {
@@ -37,7 +26,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 2,
         "name": "kingdom_id",
         "type_info": "Text",
         "origin": {
@@ -48,7 +37,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 3,
         "name": "kingdom_name",
         "type_info": "Text",
         "origin": {
@@ -59,7 +48,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "phylum_id",
         "type_info": "Text",
         "origin": {
@@ -70,7 +59,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "phylum_name",
         "type_info": "Text",
         "origin": {
@@ -81,7 +70,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "class_id",
         "type_info": "Text",
         "origin": {
@@ -92,7 +81,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "class_name",
         "type_info": "Text",
         "origin": {
@@ -103,7 +92,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 8,
         "name": "order_id",
         "type_info": "Text",
         "origin": {
@@ -114,7 +103,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "order_name",
         "type_info": "Text",
         "origin": {
@@ -125,7 +114,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 10,
         "name": "family_id",
         "type_info": "Text",
         "origin": {
@@ -136,7 +125,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 11,
         "name": "family_name",
         "type_info": "Text",
         "origin": {
@@ -147,7 +136,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 12,
         "name": "genus_id",
         "type_info": "Text",
         "origin": {
@@ -158,7 +147,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 13,
         "name": "genus_name",
         "type_info": "Text",
         "origin": {
@@ -188,9 +177,8 @@
       false,
       false,
       false,
-      false,
       false
     ]
   },
-  "hash": "fe30271cfb6cfe57d653634c562e1fe8d42a70a87c8b11e9261b9a0611d072a6"
+  "hash": "61bef2aedd2b060dc9e854afb0abfcca88c179a3f471007cda0657fa85679457"
 }

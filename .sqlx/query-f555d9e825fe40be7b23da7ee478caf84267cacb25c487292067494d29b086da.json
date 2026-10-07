@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id, s.name, s.scientific_name, s.diet, s.description, s.discovery_year, s.image_url, s.length_min_m, s.length_max_m, s.height_min_m, s.height_max_m, s.weight_min_kg, s.weight_max_kg FROM species s WHERE s.id = $1",
+  "query": "SELECT s.id, s.genus_id, s.name, s.scientific_name, s.diet, s.description, s.discovery_year, s.image_url, s.length_min_m, s.length_max_m, s.height_min_m, s.height_max_m, s.weight_min_kg, s.weight_max_kg FROM species s WHERE s.id = $1",
   "describe": {
     "columns": [
       {
@@ -16,6 +16,17 @@
       },
       {
         "ordinal": 1,
+        "name": "genus_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "species",
+            "name": "genus_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "name",
         "type_info": "Text",
         "origin": {
@@ -26,7 +37,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "scientific_name",
         "type_info": "Text",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "diet",
         "type_info": "Text",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "description",
         "type_info": "Text",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "discovery_year",
         "type_info": "Int4",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "image_url",
         "type_info": "Text",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "length_min_m",
         "type_info": "Numeric",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "length_max_m",
         "type_info": "Numeric",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "height_min_m",
         "type_info": "Numeric",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "height_max_m",
         "type_info": "Numeric",
         "origin": {
@@ -125,7 +136,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "weight_min_kg",
         "type_info": "Numeric",
         "origin": {
@@ -136,7 +147,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "weight_max_kg",
         "type_info": "Numeric",
         "origin": {
@@ -158,6 +169,7 @@
       false,
       false,
       false,
+      false,
       true,
       true,
       true,
@@ -168,5 +180,5 @@
       true
     ]
   },
-  "hash": "55bf68e8e65460ec8907b1b7940d3ee82e148d4ac65a13bb057b9fdb90bd65b4"
+  "hash": "f555d9e825fe40be7b23da7ee478caf84267cacb25c487292067494d29b086da"
 }

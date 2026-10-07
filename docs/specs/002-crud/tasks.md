@@ -80,7 +80,7 @@
 
 - [X] T057 [P] Write query-plan tests (plan §Cases `query_plans.rs`) in `tests/api/query_plans.rs`
 - [X] T058 [P] Write latency tests (plan §Cases `performance.rs`) in `tests/api/performance.rs`
-- [ ] T059 Fix any non-index-served or over-budget shape in `src/api/species/list.rs`, `src/api/species/card.rs`, `src/api/geologic_time.rs`, `src/api/taxonomy.rs`, `src/api/geography.rs`
+- [X] T059 Fix any non-index-served or over-budget shape in `src/api/species/list.rs`, `src/api/species/card.rs`, `src/api/geologic_time.rs`, `src/api/taxonomy.rs`, `src/api/geography.rs`
 
 ## Phase 8: Polish
 

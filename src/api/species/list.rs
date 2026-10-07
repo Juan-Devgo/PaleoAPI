@@ -99,11 +99,14 @@ fn push_where(qb: &mut QueryBuilder<Postgres>, f: &SpeciesFilter) {
     for (value, (column, from)) in ranks.into_iter().zip(RANK_FILTERS) {
         if let Some(id) = value {
             and(qb);
+            // The genus set is computed once (an InitPlan), so a page that walks its sort
+            // index tests each row against the set instead of probing the rank chain per
+            // row (T059: `kingdom` pages took > 30 ms that way).
             qb.push(format_args!(
-                "s.genus_id IN (SELECT g.id FROM {from} WHERE {column} = "
+                "s.genus_id = ANY(ARRAY(SELECT g.id FROM {from} WHERE {column} = "
             ))
             .push_bind(id.clone())
-            .push("::text)");
+            .push("::text))");
         }
     }
     if let Some(period) = &f.period {
