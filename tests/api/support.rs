@@ -301,3 +301,80 @@ pub fn ids(resp: &Resp) -> Vec<String> {
 pub fn pagination(resp: &Resp) -> Value {
     resp.json()["pagination"].clone()
 }
+
+// ---------------------------------------------------------------- planner
+
+/// A bind value for [`explain_sql`].
+#[derive(Debug, Clone)]
+pub enum Bind {
+    Text(String),
+    Texts(Vec<String>),
+    Num(bigdecimal::BigDecimal),
+}
+
+pub fn text(s: &str) -> Bind {
+    Bind::Text(s.to_string())
+}
+
+pub fn texts(ids: &[&str]) -> Bind {
+    Bind::Texts(ids.iter().map(|s| s.to_string()).collect())
+}
+
+pub fn num(s: &str) -> Bind {
+    Bind::Num(s.parse().unwrap())
+}
+
+fn explain_prefix(analyze: bool) -> &'static str {
+    if analyze {
+        "EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF) "
+    } else {
+        "EXPLAIN (COSTS OFF) "
+    }
+}
+
+/// `EXPLAIN` of the statement a list builder produces, with its binds, under
+/// `enable_seqscan = off` (plan §Cases `query_plans.rs`).
+pub async fn explain_with_binds(
+    pool: &PgPool,
+    analyze: bool,
+    build: impl FnOnce(&mut sqlx::QueryBuilder<sqlx::Postgres>),
+) -> String {
+    let mut tx = pool.begin().await.unwrap();
+    exec(&mut *tx, "SET LOCAL enable_seqscan = off")
+        .await
+        .unwrap();
+    let mut qb = sqlx::QueryBuilder::new(explain_prefix(analyze));
+    build(&mut qb);
+    let sql = qb.sql().as_str().to_string();
+    let lines: Vec<String> = qb
+        .build_query_scalar()
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap_or_else(|e| panic!("EXPLAIN failed for {sql}: {e}"));
+    tx.rollback().await.unwrap();
+    lines.join("\n")
+}
+
+/// `EXPLAIN` of a fixed statement (`*_SQL` constant) with binds, under
+/// `enable_seqscan = off`.
+pub async fn explain_sql(pool: &PgPool, sql: &str, binds: Vec<Bind>) -> String {
+    let mut tx = pool.begin().await.unwrap();
+    exec(&mut *tx, "SET LOCAL enable_seqscan = off")
+        .await
+        .unwrap();
+    let text = format!("{}{sql}", explain_prefix(false));
+    let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(text));
+    for b in binds {
+        q = match b {
+            Bind::Text(s) => q.bind(s),
+            Bind::Texts(v) => q.bind(v),
+            Bind::Num(n) => q.bind(n),
+        };
+    }
+    let lines = q
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap_or_else(|e| panic!("EXPLAIN failed for {sql}: {e}"));
+    tx.rollback().await.unwrap();
+    lines.join("\n")
+}
