@@ -92,7 +92,7 @@
 
 ## Phase 9: Convergence
 
-- [ ] T067 Measure each read shape with 1 warm-up + one 20-run round under a release build (debug-skipped) in tests/api/performance.rs
+- [X] T067 Measure each read shape with 1 warm-up + one 20-run round under a release build (debug-skipped) in tests/api/performance.rs
 - [x] T068 Record T059 query shapes in plan §Read path and data-model §3
 - [x] T069 Document error_map.rs exclusions in data-model §4
 - [x] T070 Record shared fixed_query! macro in plan §Project Structure

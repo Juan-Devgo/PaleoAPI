@@ -9,9 +9,8 @@ use crate::support::db_support::exec_script;
 use crate::support::*;
 
 const DATASET: &str = include_str!("../db/fixtures/index_dataset.sql");
+/// One round per shape (no retries, no best-of-N); p95 is the 19th of 20 sorted.
 const RUNS: usize = 20;
-/// Measurement rounds per shape; the best p95 counts.
-const ROUNDS: usize = 6;
 const BUDGET: Duration = Duration::from_millis(50);
 
 /// Read shapes: one URI each (fixture ids, 001 data-model §9).
@@ -75,6 +74,7 @@ fn shapes() -> Vec<String> {
 }
 
 #[sqlx::test]
+#[cfg_attr(debug_assertions, ignore = "release-only: run with --release")]
 async fn every_read_shape_meets_the_p95_budget(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
     let app = app(pool_opts, opts).await;
     exec_script(&app.pool, DATASET)
@@ -86,27 +86,18 @@ async fn every_read_shape_meets_the_p95_budget(pool_opts: PgPoolOptions, opts: P
     for uri in shapes() {
         let warm = get(&app, &uri).await;
         assert_eq!(warm.status.as_u16(), 200, "{uri}: {}", warm.text());
-        // Best of a few rounds: other tests of this binary run in parallel on the same
-        // machine and database, and their load is not this endpoint's latency.
-        let mut best = Duration::MAX;
-        for _ in 0..ROUNDS {
-            let mut times = Vec::with_capacity(RUNS);
-            for _ in 0..RUNS {
-                let t = Instant::now();
-                let resp = get(&app, &uri).await;
-                times.push(t.elapsed());
-                assert_eq!(resp.status.as_u16(), 200);
-            }
-            times.sort();
-            best = best.min(times[RUNS * 95 / 100 - 1]);
-            if best < BUDGET {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+        let mut times = Vec::with_capacity(RUNS);
+        for _ in 0..RUNS {
+            let t = Instant::now();
+            let resp = get(&app, &uri).await;
+            times.push(t.elapsed());
+            assert_eq!(resp.status.as_u16(), 200);
         }
-        println!("p95 {:>8.2} ms  {uri}", best.as_secs_f64() * 1000.0);
-        if best >= BUDGET {
-            over.push(format!("{uri}: p95 {best:?}"));
+        times.sort();
+        let p95 = times[RUNS * 95 / 100 - 1];
+        println!("p95 {:>8.2} ms  {uri}", p95.as_secs_f64() * 1000.0);
+        if p95 >= BUDGET {
+            over.push(format!("{uri}: p95 {p95:?}"));
         }
     }
     assert!(
