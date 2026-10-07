@@ -10,7 +10,7 @@
 ## Phase 2: Foundational
 
 - [X] T005 Create `api` module tree with `todo!()` stubs for the public surface (plan §Project Structure) in `src/lib.rs`, `src/api/`
-- [ ] T006 Create test binary with every module declared as an empty file, plus helpers and token constants (plan §Helpers, §Rules) in `tests/api/main.rs`, `tests/api/support.rs`, `tests/api/tokens.rs`
+- [X] T006 Create test binary with every module declared as an empty file, plus helpers and token constants (plan §Helpers, §Rules) in `tests/api/main.rs`, `tests/api/support.rs`, `tests/api/tokens.rs`
 - [ ] T007 [P] Write `Decimal` unit tests (plan §Cases `decimal.rs`) in `src/api/decimal.rs`
 - [ ] T008 [P] Write input unit tests (plan §Cases `input.rs`) in `src/api/input.rs`
 - [ ] T009 [P] Write query-parameter unit tests (plan §Cases `params.rs`) in `src/api/params.rs`
