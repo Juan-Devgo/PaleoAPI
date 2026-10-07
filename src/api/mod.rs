@@ -1,5 +1,29 @@
 //! HTTP API under `/api/v1` (spec 002, plan §Request pipeline).
 
+/// Declares a fixed read or lookup statement once: a `pub const <NAME>_SQL` with its
+/// text (so tests `EXPLAIN` exactly what runs) and a function running it through the
+/// compile-time checked `query_as!` (research R3, plan §Project Structure).
+macro_rules! fixed_query {
+    (@ret fetch_all $row:ty) => { Vec<$row> };
+    (@ret fetch_optional $row:ty) => { Option<$row> };
+    (@ret fetch_one $row:ty) => { $row };
+    (
+        $(#[$doc:meta])*
+        $vis:vis const $name:ident = $sql:tt;
+        $fvis:vis fn $f:ident($($arg:ident: $ty:ty),* $(,)?) -> $mode:ident $row:ty;
+    ) => {
+        $(#[$doc])*
+        $vis const $name: &str = $sql;
+
+        $fvis async fn $f(
+            conn: &mut sqlx::PgConnection,
+            $($arg: $ty),*
+        ) -> sqlx::Result<fixed_query!(@ret $mode $row)> {
+            sqlx::query_as!($row, $sql, $($arg),*).$mode(conn).await
+        }
+    };
+}
+
 pub mod auth;
 pub mod db_error;
 pub mod decimal;
