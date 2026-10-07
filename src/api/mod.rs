@@ -132,8 +132,11 @@ pub const ROUTES: &[(&str, &[Method])] = &[
         "/countries/{country_id}",
         &[Method::GET, Method::PATCH, Method::DELETE],
     ),
-    ("/species", &[Method::GET]),
-    ("/species/{species_id}", &[Method::GET]),
+    ("/species", &[Method::GET, Method::POST]),
+    (
+        "/species/{species_id}",
+        &[Method::GET, Method::PATCH, Method::DELETE],
+    ),
 ];
 
 /// Registers every resource under `/api/v1`. Taxonomy registers only the six direct
@@ -251,8 +254,17 @@ fn routes(cfg: &mut web::ServiceConfig) {
             .route(web::patch().to(geo::update_country))
             .route(web::delete().to(geo::delete_country)),
     )
-    .service(web::resource("/species").route(web::get().to(species::list)))
-    .service(web::resource("/species/{species_id}").route(web::get().to(species::detail)));
+    .service(
+        web::resource("/species")
+            .route(web::get().to(species::list))
+            .route(web::post().to(species::create)),
+    )
+    .service(
+        web::resource("/species/{species_id}")
+            .route(web::get().to(species::detail))
+            .route(web::patch().to(species::update))
+            .route(web::delete().to(species::delete)),
+    );
 }
 
 /// Builds the application: routes, CORS headers, `OPTIONS`, `404`/`405` envelopes

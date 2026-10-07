@@ -167,7 +167,7 @@ pub fn size_field(o: &mut Obj) -> Option<Field<SizeInput>> {
     }
 }
 
-/// A validated create body (pure checks only).
+/// A validated create body.
 #[derive(Debug, Clone)]
 pub struct SpeciesCreate {
     pub id: String,
@@ -184,7 +184,46 @@ pub struct SpeciesCreate {
     pub image_url: Option<String>,
 }
 
-/// A validated patch body: `None` keeps the stored value.
+/// A create body after pure checks: each field `None` when missing or invalid
+/// (its detail is recorded), so database checks still run for the valid ones (research R9).
+#[derive(Debug, Clone, Default)]
+pub struct SpeciesDraft {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub scientific_name: Option<String>,
+    pub diet: Option<&'static str>,
+    pub description: Option<String>,
+    pub genus_id: Option<String>,
+    pub period_ids: Option<Vec<String>>,
+    pub continent_ids: Option<Vec<String>>,
+    pub country_ids: Option<Vec<String>>,
+    pub size: Option<SizeInput>,
+    pub discovery_year: Option<Option<i32>>,
+    pub image_url: Option<Option<String>>,
+}
+
+impl SpeciesDraft {
+    /// The create body once every field is valid.
+    pub fn complete(self) -> Option<SpeciesCreate> {
+        Some(SpeciesCreate {
+            id: self.id?,
+            name: self.name?,
+            scientific_name: self.scientific_name?,
+            diet: self.diet?,
+            description: self.description?,
+            genus_id: self.genus_id?,
+            period_ids: self.period_ids?,
+            continent_ids: self.continent_ids?,
+            country_ids: self.country_ids?,
+            size: self.size?,
+            discovery_year: self.discovery_year?,
+            image_url: self.image_url?,
+        })
+    }
+}
+
+/// A validated patch body: `None` keeps the stored value (invalid fields are `None`
+/// too; their details make the request fail).
 #[derive(Debug, Clone, Default)]
 pub struct SpeciesPatch {
     pub name: Option<String>,
@@ -200,7 +239,7 @@ pub struct SpeciesPatch {
     pub image_url: Option<Option<String>>,
 }
 
-/// A nullable optional field: `null` and absent mean "empty"/`NULL`.
+/// A nullable optional field on create: `null` and absent mean empty / `NULL`.
 fn or_default<T: Default>(f: Option<Field<T>>) -> Option<T> {
     f.map(|f| match f {
         Field::Value(v) => v,
@@ -209,42 +248,21 @@ fn or_default<T: Default>(f: Option<Field<T>>) -> Option<T> {
 }
 
 /// A nullable optional field in a `PATCH`: absent keeps, `null` clears.
-fn patch_nullable<T: Default>(f: Option<Field<T>>) -> Option<Option<T>> {
-    f.map(|f| match f {
-        Field::Absent => None,
-        Field::Null => Some(T::default()),
-        Field::Value(v) => Some(v),
-    })
+fn patch_nullable<T: Default>(f: Option<Field<T>>) -> Option<T> {
+    match f {
+        None | Some(Field::Absent) => None,
+        Some(Field::Null) => Some(T::default()),
+        Some(Field::Value(v)) => Some(v),
+    }
 }
 
-/// Pure validation of a create body; `None` when a detail was recorded.
-pub fn read_create(o: &mut Obj) -> Option<SpeciesCreate> {
-    let id = o.required("id", slug);
-    let name = o.required("name", input::name);
-    let scientific_name = o.required("scientific_name", text(128));
-    let diet = o.required("diet", one_of(DIETS));
-    let description = o.required("description", text(1000));
-    let genus_id = o.required("genus_id", slug);
-    let period_ids = o.required("period_ids", slug_list(1, 20));
-    let continent_ids = or_default(o.optional("continent_ids", slug_list(0, 20)));
-    let country_ids = or_default(o.optional("country_ids", slug_list(0, 50)));
-    let size = or_default(size_field(o));
-    let discovery_year = o.optional("discovery_year", integer(1600)).map(opt);
-    let image_url = o.optional("image_url", url).map(opt);
-    Some(SpeciesCreate {
-        id: id?,
-        name: name?,
-        scientific_name: scientific_name?,
-        diet: diet?,
-        description: description?,
-        genus_id: genus_id?,
-        period_ids: period_ids?,
-        continent_ids: continent_ids?,
-        country_ids: country_ids?,
-        size: size?,
-        discovery_year: discovery_year?,
-        image_url: image_url?,
-    })
+/// A nullable scalar in a `PATCH`: absent keeps, `null` sets `NULL`.
+fn patch_scalar<T>(f: Option<Field<T>>) -> Option<Option<T>> {
+    match f {
+        None | Some(Field::Absent) => None,
+        Some(Field::Null) => Some(None),
+        Some(Field::Value(v)) => Some(Some(v)),
+    }
 }
 
 fn opt<T>(f: Field<T>) -> Option<T> {
@@ -254,47 +272,44 @@ fn opt<T>(f: Field<T>) -> Option<T> {
     }
 }
 
-/// Pure validation of a patch body; `None` when a detail was recorded.
-pub fn read_patch(o: &mut Obj) -> Option<SpeciesPatch> {
+/// Pure validation of a create body.
+pub fn read_create(o: &mut Obj) -> SpeciesDraft {
+    SpeciesDraft {
+        id: o.required("id", slug),
+        name: o.required("name", input::name),
+        scientific_name: o.required("scientific_name", text(128)),
+        diet: o.required("diet", one_of(DIETS)),
+        description: o.required("description", text(1000)),
+        genus_id: o.required("genus_id", slug),
+        period_ids: o.required("period_ids", slug_list(1, 20)),
+        continent_ids: or_default(o.optional("continent_ids", slug_list(0, 20))),
+        country_ids: or_default(o.optional("country_ids", slug_list(0, 50))),
+        size: or_default(size_field(o)),
+        discovery_year: o.optional("discovery_year", integer(1600)).map(opt),
+        image_url: o.optional("image_url", url).map(opt),
+    }
+}
+
+/// Pure validation of a patch body.
+pub fn read_patch(o: &mut Obj) -> SpeciesPatch {
     o.forbid(
         "id",
         "id cannot be changed. Remove it from the body; create a new resource instead.",
     );
     o.require_some_field();
-    let name = o.patch("name", input::name);
-    let scientific_name = o.patch("scientific_name", text(128));
-    let diet = o.patch("diet", one_of(DIETS));
-    let description = o.patch("description", text(1000));
-    let genus_id = o.patch("genus_id", slug);
-    let period_ids = o.patch("period_ids", slug_list(1, 20));
-    let continent_ids = patch_nullable(o.optional("continent_ids", slug_list(0, 20)));
-    let country_ids = patch_nullable(o.optional("country_ids", slug_list(0, 50)));
-    let size = patch_nullable(size_field(o));
-    let discovery_year = o
-        .optional("discovery_year", integer(1600))
-        .map(|f| match f {
-            Field::Absent => None,
-            Field::Null => Some(None),
-            Field::Value(v) => Some(Some(v)),
-        });
-    let image_url = o.optional("image_url", url).map(|f| match f {
-        Field::Absent => None,
-        Field::Null => Some(None),
-        Field::Value(v) => Some(Some(v)),
-    });
-    Some(SpeciesPatch {
-        name: name?,
-        scientific_name: scientific_name?,
-        diet: diet?,
-        description: description?,
-        genus_id: genus_id?,
-        period_ids: period_ids?,
-        continent_ids: continent_ids?,
-        country_ids: country_ids?,
-        size: size?,
-        discovery_year: discovery_year?,
-        image_url: image_url?,
-    })
+    SpeciesPatch {
+        name: o.patch("name", input::name).flatten(),
+        scientific_name: o.patch("scientific_name", text(128)).flatten(),
+        diet: o.patch("diet", one_of(DIETS)).flatten(),
+        description: o.patch("description", text(1000)).flatten(),
+        genus_id: o.patch("genus_id", slug).flatten(),
+        period_ids: o.patch("period_ids", slug_list(1, 20)).flatten(),
+        continent_ids: patch_nullable(o.optional("continent_ids", slug_list(0, 20))),
+        country_ids: patch_nullable(o.optional("country_ids", slug_list(0, 50))),
+        size: patch_nullable(size_field(o)),
+        discovery_year: patch_scalar(o.optional("discovery_year", integer(1600))),
+        image_url: patch_scalar(o.optional("image_url", url)),
+    }
 }
 
 // ---------------------------------------------------------------- database checks (research R9)
