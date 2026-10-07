@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id, p.name, p.start_mya, p.end_mya, e.id AS era_id, e.name AS era_name FROM periods p JOIN eras e ON e.id = p.era_id WHERE p.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "periods",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "periods",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "start_mya",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "periods",
+            "name": "start_mya"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "end_mya",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "periods",
+            "name": "end_mya"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "era_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "eras",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "era_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "eras",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ea7b73d3ef6601554fb8443dbfb67ca953187684f90f0316f714dc1d63bd4b03"
+}

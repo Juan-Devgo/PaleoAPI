@@ -49,7 +49,7 @@
 - [X] T033 [P] [US4] Write era/period read tests (plan §Cases `geologic_time.rs` reads) in `tests/api/geologic_time.rs`
 - [X] T034 [P] [US4] Write taxonomy read tests (plan §Cases `taxonomy.rs` reads) in `tests/api/taxonomy.rs`
 - [X] T035 [P] [US4] Write continent/country read tests (plan §Cases `geography.rs` reads) in `tests/api/geography.rs`
-- [ ] T036 [P] [US4] Implement era and period reads (Q-E1…Q-E3, Q-P1…Q-P4 with joined `era`, `*_SQL` constants; plan §Read path Embedding; research R8), then run `cargo sqlx prepare -- --all-targets`, in `src/api/geologic_time.rs`, `.sqlx/`
+- [X] T036 [P] [US4] Implement era and period reads (Q-E1…Q-E3, Q-P1…Q-P4 with joined `era`, `*_SQL` constants; plan §Read path Embedding; research R8), then run `cargo sqlx prepare -- --all-targets`, in `src/api/geologic_time.rs`, `.sqlx/`
 - [ ] T037 [P] [US4] Implement `Rank` descriptors, per-rank SQL macro (research R3), reads (Q-T1…Q-T3 with joined parent; plan §Read path Embedding) in `src/api/taxonomy.rs`
 - [ ] T038 [P] [US4] Implement continent and country reads (Q-C1…Q-C3, Q-K1, Q-K2 batched per page, `*_SQL` constants; plan §Read path Embedding), then run `cargo sqlx prepare -- --all-targets`, in `src/api/geography.rs`, `.sqlx/`
 - [ ] T039 [US4] Register read routes (taxonomy: six direct nested paths only) and `ROUTES` entries in `src/api/mod.rs`
