@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id FROM periods p WHERE numrange(p.end_mya, p.start_mya, '[)') && numrange($1::numeric, $2::numeric, '[)') AND p.id <> $3 ORDER BY p.id LIMIT 5",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "periods",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Numeric",
+        "Numeric",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "25f0f9383c852c06ae55c742cfd75f63d5d33e53965b01587bf58d6d333edd80"
+}

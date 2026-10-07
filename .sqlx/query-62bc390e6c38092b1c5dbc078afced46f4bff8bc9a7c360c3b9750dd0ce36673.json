@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO species_continents (species_id, continent_id) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "62bc390e6c38092b1c5dbc078afced46f4bff8bc9a7c360c3b9750dd0ce36673"
+}

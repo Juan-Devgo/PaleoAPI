@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM species_continents WHERE species_id = $1 AND continent_id <> ALL($2::text[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bc743606ca613d2bd74dd9cc39b75fdc74ec33ee1ede9af0fe6e7d0678dc74ea"
+}

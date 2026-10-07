@@ -1,7 +1,8 @@
 # Spec 002 — Core CRUD for PaleoAPI Resources
 
-**Status:** Draft
+**Status:** Approved
 **Created:** 2026-09-26
+**Last updated:** 2026-10-06
 **Constitution version:** 1.1.0
 **Depends on:** [Spec 001 — Database Foundation](../001-database/spec.md)
 
@@ -12,6 +13,17 @@
 Define the public read and admin write behavior of PaleoAPI's core resources: **species**, **geologic time** (eras and periods), **taxonomy ranks** (domain → genus), and **geography** (continents and countries).
 
 This spec defines the API contract: what each endpoint accepts, returns, and rejects. Persistence (database availability, migrations, and integrity constraints) is provided by Spec 001, which must be implemented first. Authentication is covered by the later security spec (see §9).
+
+## Clarifications
+
+### Session 2026-10-03
+
+- Q: Should `q` accept 2-character terms, given that a 2-character substring search cannot be served by an index (Constitution III)? → A: No. `q` is 3–64 characters after trimming (§5 species filters, AC 8). Raised during Spec 001 analysis.
+
+### Session 2026-10-06
+
+- Q: Do decimal fields have an upper bound? → A: Yes. A decimal's absolute value must be below 10^15 and its JSON number text at most 40 characters; otherwise `422` (§4.13).
+- Q: Do trailing zeros count as decimal places? → A: No. `66.0000` is valid where 2 places are allowed. Decimals are returned normalized without trailing zeros (`66.0` → `66`) (§4.13).
 
 ## 2. Motivation
 
@@ -87,7 +99,7 @@ Validation errors (`422`) also include a `details` array with one entry per prob
     "code": "VALIDATION_FAILED",
     "message": "The request body has 2 invalid fields.",
     "details": [
-      { "field": "end_mya", "message": "end_mya (201.4) must be less than start_mya (145.0)." },
+      { "field": "end_mya", "message": "end_mya (201.4) must be less than start_mya (145)." },
       { "field": "id", "message": "id must be 2–64 lowercase letters, digits, or hyphens." }
     ]
   }
@@ -195,7 +207,7 @@ Data changes rarely, so reads may be served from HTTP caches, and clients can al
 
 - **Text fields** have surrounding whitespace trimmed before validation and storage. Lengths are counted in Unicode characters after trimming. A value that is empty after trimming counts as missing.
 - `name`: required, 1–64 characters, unique within its resource type (case-insensitive), except where a resource says otherwise. A duplicate returns `409`. Renaming a resource to a different casing of its own name is allowed.
-- **Decimals** are sent and returned as JSON numbers. A value with more decimal places than a field allows returns `422`. It is never silently rounded.
+- **Decimals** are sent and returned as JSON numbers. A value with more decimal places than a field allows returns `422`. It is never silently rounded. Trailing zeros do not count as decimal places, and decimals are returned without them (`66.0` is returned as `66`). A decimal whose absolute value is `≥ 10^15`, or whose JSON number text is longer than 40 characters, returns `422`.
 - **Lists of ids** reject duplicates with `422`. Each list field has a maximum length, stated per resource.
 - A **summary** of a related resource is `{ "id": "...", "name": "..." }`. Continent summaries also include `type`.
 
@@ -383,7 +395,7 @@ All paths are under `/api/v1/taxonomy`. `{rank}` is the plural segment and `{par
   "description": "...",
   "discovery_year": 1905,
   "image_url": "https://example.org/trex.png",
-  "size": { "length_m": { "min": 11.0, "max": 12.3 }, "height_m": null, "weight_kg": { "min": 5000, "max": 8000 } },
+  "size": { "length_m": { "min": 11, "max": 12.3 }, "height_m": null, "weight_kg": { "min": 5000, "max": 8000 } },
   "taxonomy": {
     "domain":  { "id": "eukaryota", "name": "Eukaryota" },
     "kingdom": { "id": "animalia", "name": "Animalia" },
@@ -421,7 +433,7 @@ All paths are under `/api/v1/taxonomy`. `{rank}` is the plural segment and `{par
 | `domain`, `kingdom`, `phylum`, `class`, `order`, `family`, `genus` | Species whose lineage includes that rank item |
 | `continent` | Species linked to that continent (prehistoric or modern) |
 | `country` | Species linked directly to that country |
-| `q` | Case-insensitive substring match on `name` or `scientific_name`; 2–64 characters after trimming. Every character matches literally (`%` and `_` are not wildcards). |
+| `q` | Case-insensitive substring match on `name` or `scientific_name`; 3–64 characters after trimming. Every character matches literally (`%` and `_` are not wildcards). |
 
 Sort: `name` (default), `scientific_name`, `discovery_year`. Species without `discovery_year` sort last in both directions.
 
@@ -504,7 +516,7 @@ Each criterion is testable. `R` means any resource in §5.
 5. `discovery_year` in the future or before 1600 returns `422`. A non-http(s) `image_url` returns `422`.
 6. The response contains the full taxonomy lineage, periods with their era, continents with their type, and countries, in the orders defined in §5.6.
 7. Each filter in §5.6 returns only matching species. Combined filters apply AND.
-8. `q=re` matches "Tyrannosaurus rex" through its scientific name, case-insensitively. `q=a` returns `400`. `q=%%` matches only names containing `%%` literally.
+8. `q=REX` matches "Tyrannosaurus rex" through its scientific name, case-insensitively. `q=re` returns `400`. `q=%%_` matches only names containing `%%_` literally.
 9. `country=usa` returns only species whose `country_ids` include `usa`, regardless of their continents.
 10. `PATCH` with `period_ids` replaces the whole list. `PATCH` with `"size": null` clears the size. `PATCH` with `size` containing only `length_m` removes any stored `height_m` and `weight_kg`.
 11. Reparenting a genus changes the `taxonomy` lineage and `ETag` of its species.
