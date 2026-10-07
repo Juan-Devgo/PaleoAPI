@@ -6,8 +6,10 @@ rust-version = "1.94"
 
 [dependencies]
 actix-web = "4"
+bigdecimal = { version = "0.4", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "bigdecimal"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "time"] }
