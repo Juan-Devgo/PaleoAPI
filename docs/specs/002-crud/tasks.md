@@ -74,7 +74,7 @@
 - [X] T053 [P] [US6] Implement species create/patch validation incl. `size` (spec §5.6, data-model §1, research R1, R2, R10), then run `cargo sqlx prepare -- --all-targets`, in `src/api/species/input.rs`, `.sqlx/`
 - [X] T054 [US6] Implement species `POST`, `PATCH`, `DELETE` (plan §Write path), then run `cargo sqlx prepare -- --all-targets`, in `src/api/species/mod.rs`, `.sqlx/`
 - [X] T055 [US6] Register write routes and `ROUTES` methods in `src/api/mod.rs`
-- [ ] T056 [US6] Check query metadata with `cargo sqlx prepare --check -- --all-targets` and commit `.sqlx/`
+- [X] T056 [US6] Check query metadata with `cargo sqlx prepare --check -- --all-targets` and commit `.sqlx/`
 
 ## Phase 7: Index and latency gate
 
