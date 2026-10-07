@@ -14,7 +14,7 @@ pub struct DenyAll;
 
 impl AdminGate for DenyAll {
     fn check(&self, _req: &HttpRequest) -> Result<(), ApiError> {
-        todo!()
+        Err(ApiError::unauthorized())
     }
 }
 

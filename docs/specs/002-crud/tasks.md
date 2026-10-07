@@ -21,7 +21,7 @@
 - [X] T014 Implement `ApiError`, codes (spec §4.12), `FieldError`, envelope rendering, `no-store` on `GET` errors in `src/api/error.rs`
 - [X] T015 Implement `Decimal` (research R1) in `src/api/decimal.rs`
 - [X] T016 Implement query-string parser (plan §Read path) in `src/api/params.rs`
-- [ ] T017 Implement `AdminGate` and `DenyAll` (research R4) in `src/api/auth.rs`
+- [X] T017 Implement `AdminGate` and `DenyAll` (research R4) in `src/api/auth.rs`
 - [ ] T018 Implement write-body reader (plan §Request pipeline step 3, research R5), cached `GET` responder (research R7), envelopes, `Location` in `src/api/http.rs`
 - [ ] T019 [P] Implement `api_connect_options` (research R3) in `src/db.rs`
 - [X] T020 Implement `Field<T>`, object walker, shared validators (research R2, R10) in `src/api/input.rs`
