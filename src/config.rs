@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use sqlx::postgres::PgConnectOptions;
 
-use crate::db::StartupError;
+use crate::db::{SettingProblem, StartupError};
 use crate::security::client_ip::TrustedProxies;
 
 /// The only configuration variable the API reads.
@@ -46,12 +46,77 @@ pub struct SecurityConfig {
     pub max_concurrent_password_hashes: usize,
 }
 
+pub const JWT_SECRET: &str = "JWT_SECRET";
+pub const TRUSTED_PROXIES: &str = "TRUSTED_PROXIES";
+
+/// Minimum `JWT_SECRET` length in bytes (FR-014).
+const MIN_SECRET_BYTES: usize = 32;
+/// Marker of the `.env.example` placeholders, matched in any case.
+const PLACEHOLDER: &str = "change-me";
+
 /// Reads the Spec 003 settings through `get` (plan §Configuration). Unset or empty
 /// limit variables take their defaults. Errors never contain the secret.
 pub fn security_config_from_env(
-    _get: impl Fn(&str) -> Option<String>,
+    get: impl Fn(&str) -> Option<String>,
 ) -> Result<SecurityConfig, StartupError> {
-    todo!()
+    let secret = get(JWT_SECRET).unwrap_or_default();
+    if secret.is_empty() {
+        return Err(StartupError::MissingSecret);
+    }
+    if secret.len() < MIN_SECRET_BYTES {
+        return Err(StartupError::ShortSecret);
+    }
+    if secret.to_ascii_lowercase().contains(PLACEHOLDER) {
+        return Err(StartupError::PlaceholderSecret);
+    }
+
+    let int = |var: &'static str, default: u32, min: u32, max: u32| -> Result<u32, StartupError> {
+        let value = get(var).unwrap_or_default();
+        let value = value.trim();
+        if value.is_empty() {
+            return Ok(default);
+        }
+        value
+            .parse::<u32>()
+            .ok()
+            .filter(|v| (min..=max).contains(v))
+            .ok_or(StartupError::InvalidSetting {
+                var,
+                problem: SettingProblem::Range {
+                    min: min.into(),
+                    max: max.into(),
+                },
+            })
+    };
+    let rate_limit_per_minute = int("RATE_LIMIT_PER_MINUTE", 600, 1, 1_000_000)?;
+    let rate_limit_burst = int("RATE_LIMIT_BURST", 120, 1, 1_000_000)?;
+    let login_limit_per_client = int("LOGIN_LIMIT_PER_CLIENT", 10, 1, 10_000)?;
+    let login_limit_per_username = int("LOGIN_LIMIT_PER_USERNAME", 20, 1, 10_000)?;
+    let login_limit_window = int("LOGIN_LIMIT_WINDOW_SECONDS", 900, 1, 86_400)?;
+    let max_concurrent_requests = int("MAX_CONCURRENT_REQUESTS", 256, 1, 65_535)?;
+    let max_concurrent_password_hashes = int("MAX_CONCURRENT_PASSWORD_HASHES", 2, 1, 64)?;
+
+    let proxies = get(TRUSTED_PROXIES).unwrap_or_default();
+    let trusted_proxies = if proxies.trim().is_empty() {
+        TrustedProxies::default()
+    } else {
+        TrustedProxies::parse(&proxies).map_err(|entry| StartupError::InvalidSetting {
+            var: TRUSTED_PROXIES,
+            problem: SettingProblem::ProxyEntry(entry),
+        })?
+    };
+
+    Ok(SecurityConfig {
+        jwt_secret: JwtSecret::new(secret),
+        rate_limit_per_minute,
+        rate_limit_burst,
+        login_limit_per_client,
+        login_limit_per_username,
+        login_limit_window: Duration::from_secs(login_limit_window.into()),
+        trusted_proxies,
+        max_concurrent_requests: max_concurrent_requests as usize,
+        max_concurrent_password_hashes: max_concurrent_password_hashes as usize,
+    })
 }
 
 /// Builds the connection options from `DATABASE_URL`, read through `get`
@@ -76,7 +141,6 @@ mod tests {
     use std::net::IpAddr;
 
     use super::*;
-    use crate::db::SettingProblem;
 
     const LEAKS: [&str; 4] = ["leaky_user", "leaky-secret-123", "localhost", "postgres://"];
 

@@ -12,6 +12,9 @@ use sqlx::{Connection, PgConnection};
 /// Bounded startup wait for the database (FR-003, research R5).
 pub const STARTUP_WAIT: Duration = Duration::from_secs(10);
 
+/// Time limit for one database operation of the API (Spec 003 FR-031, research R13).
+pub const DB_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Migrations embedded at build time. The API only compares against them;
 /// it never applies them (FR-004).
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -94,10 +97,28 @@ impl fmt::Display for StartupError {
                 "Migration {v} was modified after it was applied. \
                  Restore the original migration file or reset the database."
             ),
-            Self::MissingSecret
-            | Self::ShortSecret
-            | Self::PlaceholderSecret
-            | Self::InvalidSetting { .. } => todo!(),
+            Self::MissingSecret => f.write_str(
+                "JWT_SECRET is not set. Set it to a random value of at least 32 bytes \
+                 (openssl rand -base64 48).",
+            ),
+            Self::ShortSecret => f.write_str(
+                "JWT_SECRET is shorter than 32 bytes. Use a random value (openssl rand -base64 48).",
+            ),
+            Self::PlaceholderSecret => f.write_str(
+                "JWT_SECRET is still the placeholder from .env.example. \
+                 Replace it with a random value (openssl rand -base64 48).",
+            ),
+            Self::InvalidSetting {
+                var,
+                problem: SettingProblem::Range { min, max },
+            } => write!(f, "{var} must be an integer from {min} to {max}."),
+            Self::InvalidSetting {
+                var,
+                problem: SettingProblem::ProxyEntry(entry),
+            } => write!(
+                f,
+                "{var} entry '{entry}' is not an IP address or CIDR range."
+            ),
         }
     }
 }
