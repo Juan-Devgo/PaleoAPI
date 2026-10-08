@@ -5,7 +5,7 @@
 ## Technical Context
 
 - **Base:** the working tree with Spec 002 merged (1c1d5c2). Paths below are verified against it.
-- **Dependencies:** `jsonwebtoken` 11.1 (`default-features = false, features = ["rust_crypto"]`, R6); `argon2` 0.6 (default features, R8). Both are the AGENTS §2 stack items "JWT" and "Argon2". `actix-web` keeps its default features. Nothing else: rate limiting, CIDR parsing, CORS, permits, event log, and time formatting use `std` + `serde_json` (R1, R5, R12, R15, R17). Tool: `cargo-audit` 0.22, `cargo install cargo-audit --locked` (R18).
+- **Dependencies:** `jsonwebtoken` 11.1 (`default-features = false, features = ["rust_crypto"]`, R6); `argon2` 0.6 (default features, R8). Both are the AGENTS §2 stack items "JWT" and "Argon2". `actix-web` 4: `default-features = false, features = ["macros", "compress-brotli", "compress-gzip", "compress-zstd", "cookies", "unicode", "compat", "ws"]`, every 4.15 default except `http2`, so `h2` leaves `Cargo.lock` (RUSTSEC-2026-0258, §Supply chain, R21; reverses R20's "keeps its default features"). Nothing else: rate limiting, CIDR parsing, CORS, permits, event log, and time formatting use `std` + `serde_json` (R1, R5, R12, R15, R17). Tool: `cargo-audit` 0.22, `cargo install cargo-audit --locked` (R18).
 - **No new C dependency:** every crate this feature adds is pure Rust. A C compiler is a build prerequisite: the existing `zstd-sys` (`actix-web` default `compress-zstd`) and `cargo install cargo-audit` compile C (R18, R20).
 - **Storage:** migration `accounts` (data-model §1); rate-limit state in process memory (R1).
 - **Binaries:** `paleo_api` (server, `default-run`) and `paleo-accounts` (operator tool, contracts/accounts-cli.md).
@@ -31,8 +31,9 @@ AGENTS §3/§5 entries for `cargo audit` and `paleo-accounts` are maintained out
 
 ```text
 Cargo.toml                  # CHANGE: jsonwebtoken (rust_crypto, R6), argon2; default-run = "paleo_api";
-                            #   [profile.dev.package.argon2] / [profile.dev.package.blake2] opt-level = 3 (R8)
-Cargo.lock                  # CHANGE: new crates, none compiling C (R20)
+                            #   [profile.dev.package.argon2] / [profile.dev.package.blake2] opt-level = 3 (R8);
+                            #   actix-web without `http2` (§Technical Context Dependencies, R21)
+Cargo.lock                  # CHANGE: new crates, none compiling C (R20); no `h2` (R21)
 .cargo/audit.toml           # NEW: [advisories] ignore = ["RUSTSEC-2023-0071"] (§Supply chain)
 .env.example                # CHANGE: JWT_SECRET=change-me-…; limit variables commented with defaults
 .sqlx/                      # CHANGE: regenerated for src/security/accounts.rs (§Technical Context Queries)
@@ -159,6 +160,8 @@ Messages and examples: contracts/openapi.yaml. `Retry-After` on every `429` and 
 | Advisory | Crate | Why it does not apply |
 |---|---|---|
 | RUSTSEC-2023-0071 | `rsa` 0.9 (via `jsonwebtoken` `rust_crypto`) | Timing side channel in RSA private-key operations. The API holds no RSA key, accepts only HS256, and never calls RSA code (R6). Revisit if any RSA algorithm is ever accepted. |
+
+- Removed, not ignored (user decision 2026-10-08, R21): RUSTSEC-2026-0258 (`h2` 0.3.27, unbounded empty DATA frames; fixed only in 0.4.16, which `actix-http` 3 cannot use). `h2` comes only from `actix-web`'s default `http2` feature, so that feature is off (§Technical Context Dependencies) and the API speaks HTTP/1.x only. Gate: `h2` absent from `Cargo.lock` and `cargo audit` passes with no ignore for it (T093). Re-enabling `http2`, `rustls-*`, or `openssl` (each implies `http2`) needs an `h2` without this advisory.
 
 ## Deviations
 

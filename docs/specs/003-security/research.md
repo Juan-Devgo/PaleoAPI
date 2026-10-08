@@ -148,8 +148,15 @@ Every case returns before the handler runs or before the write, never passes the
 ## R20. C dependencies (user decisions 2026-10-08)
 
 - **Finding (checked, `Cargo.lock` at 1c1d5c2):** the only crate that compiles C is `zstd-sys` (via `cc`). It comes from `actix-web`'s default feature `compress-zstd` → `actix-http/compress-zstd`. Its build script compiles libzstd with `cc::Build` unless pkg-config is opted into. `libsqlite3-sys` is in the lockfile without `cc` (no bundled build), so it compiles no C.
-- **Decision:** `actix-web` keeps its default features, including `compress-zstd`. A C compiler is an accepted build prerequisite (for `zstd-sys` and for installing cargo-audit, R18). The rule for this feature: it adds no new C dependency. `jsonwebtoken` uses `rust_crypto` (R6) and `argon2` is pure Rust.
+- **Decision:** `actix-web` keeps its default features, including `compress-zstd` (except `http2`, removed by R21). A C compiler is an accepted build prerequisite (for `zstd-sys` and for installing cargo-audit, R18). The rule for this feature: it adds no new C dependency. `jsonwebtoken` uses `rust_crypto` (R6) and `argon2` is pure Rust.
 - **Rejected:** dropping `compress-zstd` and asserting "no `cc` package in `Cargo.lock`" in `tests/repo_hygiene.rs` (the user keeps the default features and accepts a C compiler); `ZSTD_SYS_USE_PKG_CONFIG` (needs a system libzstd and still links C).
+
+## R21. RUSTSEC-2026-0258 and `actix-web`'s `http2` feature (user decision 2026-10-08)
+
+- **Finding (checked, `Cargo.lock`, actix-web 4.15.0, actix-http 3.13.3 sources):** `cargo audit` reports RUSTSEC-2026-0258 for `h2` 0.3.27 (server-side DoS via unbounded empty DATA frames; patched ≥ 0.4.16). `actix-http` is the only dependent of `h2`, through `actix-http/http2`, which only `actix-web`'s default `http2` feature enables (`actix-http` defaults are empty). `actix-http` 3 depends on `h2` 0.3, so no patched version can be selected.
+- **Reachability:** compiled in, but in the current server reachable only through a listener that selects HTTP/2: `HttpServer::bind` uses `HttpService::tcp()`, which is HTTP/1.x only; HTTP/2 prior knowledge on plain TCP is accepted only by `bind_auto_h2c`/`listen_auto_h2c` (`tcp_auto_h2c` peeks for `PRI * HTTP/2`), and HTTP/2 over TLS only by the `rustls-*`/`openssl` listeners (ALPN `h2`). `src/main.rs` uses `bind`. A `PRI * HTTP/2.0` preface on the HTTP/1 codec fails parsing (bare `400`, R11).
+- **Decision:** `actix-web` with `default-features = false` and every other 4.15 default re-enabled (`macros`, `compress-brotli`, `compress-gzip`, `compress-zstd`, `cookies`, `unicode`, `compat`, `ws`). `h2` leaves the build, the FR-041 gate passes without an ignore entry, and an HTTP/2 listener can no longer be enabled by accident (those APIs do not compile without `http2`). Keeping the other defaults leaves all HTTP/1 behavior and R20's `zstd-sys` finding unchanged; pruning defaults the app does not use is out of scope. **Reverses R20's "`actix-web` keeps its default features"** for `http2` only.
+- **Rejected:** an `.cargo/audit.toml` ignore (the code would stay in the binary, and one `auto_h2c` or TLS listener would make it reachable); upgrading `h2` (blocked by `actix-http` 3's `h2` 0.3 requirement).
 
 ## Sources
 
@@ -169,3 +176,5 @@ Every case returns before the handler runs or before the write, never passes the
 - zstd-sys 2.0.16 build script (`cc::Build` by default): https://docs.rs/crate/zstd-sys/2.0.16+zstd.1.5.7/source/build.rs
 - cargo-audit 0.22.2 → rustsec 0.33 (`gix-reqwest` default) → gix-transport (`reqwest/rustls`) → reqwest 0.13.4 (`rustls` = `__rustls-aws-lc-rs`): https://docs.rs/crate/cargo-audit/latest/source/Cargo.toml.orig , https://docs.rs/crate/rustsec/latest/source/Cargo.toml.orig , https://docs.rs/crate/gix-transport/latest/source/Cargo.toml.orig , https://docs.rs/crate/reqwest/0.13.4/source/Cargo.toml.orig
 - actix-http 3.13.3 `h1/decoder.rs`, `h1/dispatcher.rs`; actix-web 4.15.0 `request.rs`, `types/payload.rs` (local crate sources, checked)
+- RUSTSEC-2026-0258 (`h2` < 0.4.16, unbounded empty DATA frames, 2026-08-18): https://rustsec.org/advisories/RUSTSEC-2026-0258.html
+- actix-web 4.15.0 `Cargo.toml` `[features]` (`default`, `http2 = ["actix-http/http2"]`), `server.rs` (`listen` → `.tcp()`, `listen_auto_h2c` behind `http2`); actix-http 3.13.3 `Cargo.toml` (`default = []`, `http2 = ["dep:h2"]`), `service.rs` (`tcp()` HTTP/1.x only, `tcp_auto_h2c` preface peek) (local crate sources, checked)
