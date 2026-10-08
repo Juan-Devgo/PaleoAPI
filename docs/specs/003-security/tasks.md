@@ -19,7 +19,7 @@
 - [X] T012 [P] Write configuration unit tests (plan §Cases `src/config.rs`) in `src/config.rs`
 - [X] T013 [P] Write client resolution unit tests (plan §Cases `src/security/*`; research R5) in `src/security/client_ip.rs`
 - [X] T014 [P] Write password policy and hashing unit tests (research R8, R9) in `src/security/password.rs`
-- [ ] T015 [P] Write claims round-trip unit tests (data-model §2; research R6) in `src/security/token.rs`
+- [X] T015 [P] Write claims round-trip unit tests (data-model §2; research R6) in `src/security/token.rs`
 - [ ] T016 [P] Write RFC 3339 formatter and `path` / `client` control-character escaping unit tests (plan §Cases `src/security/*`; research R17) in `src/security/events.rs`
 - [ ] T017 [P] Write permit unit tests (data-model §3.4) in `src/security/permits.rs`
 - [ ] T018 Write login and write-check lookup tests (plan §Cases `tests/db/accounts.rs`) in `tests/db/accounts.rs`
