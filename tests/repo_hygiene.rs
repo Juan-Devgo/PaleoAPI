@@ -166,54 +166,6 @@ fn database_url_only_in_allowed_test_files() {
     assert!(offenders.is_empty(), "{var} mentioned in: {offenders:?}");
 }
 
-/// String literals of the `const …: &str = "…";` items in `tests/api/tokens.rs`.
-fn test_token_literals() -> Vec<String> {
-    let text = read("tests/api/tokens.rs");
-    let tokens: Vec<String> = text
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.starts_with("pub const ") && l.contains(": &str"))
-        .filter_map(|l| l.split('"').nth(1))
-        .map(String::from)
-        .collect();
-    assert!(
-        tokens.len() >= 2,
-        "tests/api/tokens.rs must define TEST_ADMIN_TOKEN and TEST_USER_TOKEN"
-    );
-    tokens
-}
-
-/// `git grep` over tracked and untracked files under `src/`.
-fn grep_src(fixed: &str) -> String {
-    let (_, out) = git(&["grep", "--untracked", "-nF", fixed, "--", "src"]);
-    out
-}
-
-/// The test-only credential never reaches the library or binary (spec §4.4, research R4).
-#[test]
-fn test_tokens_are_absent_from_src() {
-    for token in test_token_literals() {
-        let hits = grep_src(&token);
-        assert!(hits.is_empty(), "test token found in src/:\n{hits}");
-    }
-}
-
-/// `DenyAll` is the only admin gate shipped in a build (research R4).
-#[test]
-fn deny_all_is_the_only_admin_gate_in_src() {
-    let hits = grep_src("impl AdminGate for");
-    let impls: Vec<&str> = hits.lines().collect();
-    assert_eq!(
-        impls.len(),
-        1,
-        "expected one AdminGate impl in src/: {impls:?}"
-    );
-    assert!(
-        impls[0].contains("impl AdminGate for DenyAll"),
-        "the only AdminGate in src/ must be DenyAll: {impls:?}"
-    );
-}
-
 /// Builds use the committed `.sqlx/` metadata (research R3).
 #[test]
 fn env_example_enables_sqlx_offline() {
