@@ -2,6 +2,10 @@
 
 use std::fmt;
 
+use jsonwebtoken::errors::ErrorKind;
+use jsonwebtoken::{
+    Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode, get_current_timestamp,
+};
 use serde::{Deserialize, Serialize};
 
 /// `iss` and `aud` of every token.
@@ -28,24 +32,46 @@ pub struct Claims {
 
 impl Claims {
     /// Claims for `username` issued at `iat` (Unix seconds).
-    pub fn new(_username: &str, _ver: i32, _iat: u64) -> Self {
-        todo!()
+    pub fn new(username: &str, ver: i32, iat: u64) -> Self {
+        Self {
+            sub: username.to_string(),
+            iss: ISSUER.to_string(),
+            aud: AUDIENCE.to_string(),
+            iat,
+            nbf: iat,
+            exp: iat + LIFETIME_SECS,
+            ver,
+        }
     }
 
     /// Claims issued now (system clock).
-    pub fn now(_username: &str, _ver: i32) -> Self {
-        todo!()
+    pub fn now(username: &str, ver: i32) -> Self {
+        Self::new(username, ver, get_current_timestamp())
     }
 }
 
-/// Signing and verification keys derived from `JWT_SECRET`.
+/// Signing and verification keys derived from `JWT_SECRET`, and the HS256-only
+/// validation rules (research R6).
 pub struct Keys {
-    _private: (),
+    encoding: EncodingKey,
+    decoding: DecodingKey,
+    validation: Validation,
 }
 
 impl Keys {
-    pub fn new(_secret: &[u8]) -> Self {
-        todo!()
+    pub fn new(secret: &[u8]) -> Self {
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.leeway = LEEWAY_SECS;
+        validation.validate_exp = true;
+        validation.validate_nbf = true;
+        validation.set_issuer(&[ISSUER]);
+        validation.set_audience(&[AUDIENCE]);
+        validation.set_required_spec_claims(&["exp", "nbf", "iss", "aud", "sub"]);
+        Self {
+            encoding: EncodingKey::from_secret(secret),
+            decoding: DecodingKey::from_secret(secret),
+            validation,
+        }
     }
 }
 
@@ -66,13 +92,23 @@ pub enum Rejection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IssueError;
 
-pub fn issue(_keys: &Keys, _claims: &Claims) -> Result<String, IssueError> {
-    todo!()
+/// Signs `claims` with the JOSE header `{"alg":"HS256","typ":"JWT"}`.
+pub fn issue(keys: &Keys, claims: &Claims) -> Result<String, IssueError> {
+    encode(&Header::new(Algorithm::HS256), claims, &keys.encoding).map_err(|_| IssueError)
 }
 
 /// Verifies signature, algorithm, and claims; `ver` and the account are checked by the caller.
-pub fn verify(_keys: &Keys, _token: &str) -> Result<Claims, Rejection> {
-    todo!()
+/// `Expired` is only reported for a token whose signature verified.
+pub fn verify(keys: &Keys, token: &str) -> Result<Claims, Rejection> {
+    if token.len() > MAX_TOKEN_BYTES {
+        return Err(Rejection::Invalid);
+    }
+    decode::<Claims>(token, &keys.decoding, &keys.validation)
+        .map(|data| data.claims)
+        .map_err(|err| match err.kind() {
+            ErrorKind::ExpiredSignature => Rejection::Expired,
+            _ => Rejection::Invalid,
+        })
 }
 
 #[cfg(test)]
