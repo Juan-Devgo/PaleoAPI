@@ -1,4 +1,5 @@
-//! Repository hygiene checks (AC 13, AC 15, FR-002, FR-007, FR-015).
+//! Repository hygiene checks (AC 13, AC 15, FR-002, FR-007, FR-015;
+//! Spec 003: AC 9, FR-014, FR-016, FR-041).
 //! Uses only `std` and the `git` binary.
 
 use std::collections::HashMap;
@@ -244,4 +245,95 @@ fn test_harness_uses_the_master_database() {
          bookkeeping schema into the development database; no resource data was read or changed. \
          Clean up with the step in quickstart §5."
     );
+}
+
+/// The JWT secret in `.env.example` is a placeholder the API refuses (003 AC 9, FR-014).
+#[test]
+fn env_example_jwt_secret_is_a_placeholder() {
+    let vars = parse_env_file(&read(".env.example"));
+    let secret = vars
+        .get("JWT_SECRET")
+        .expect(".env.example must define JWT_SECRET");
+    assert!(
+        secret.contains(PLACEHOLDER_PASSWORD),
+        "JWT_SECRET in .env.example must contain the {PLACEHOLDER_PASSWORD} placeholder"
+    );
+}
+
+/// No test gate, test credential, or token literal ships in tracked files (003 FR-016).
+/// `docs/` and this file are excluded: they name the retired items.
+#[test]
+fn retired_gate_and_token_literals_are_absent() {
+    // Header and payload of a compact JWS both start with `{"` in base64url.
+    let jwt_shaped = r"eyJ[A-Za-z0-9_-]*\.eyJ";
+    let (_, out) = git(&[
+        "grep",
+        "-nE",
+        "-e",
+        "TestGate",
+        "-e",
+        "DenyAll",
+        "-e",
+        "TEST_ADMIN_TOKEN",
+        "-e",
+        jwt_shaped,
+        "--",
+        ".",
+        ":!docs",
+        ":!tests/repo_hygiene.rs",
+    ]);
+    assert!(
+        out.is_empty(),
+        "retired gate or token literals found:\n{out}"
+    );
+}
+
+/// Advisory IDs in the `[advisories] ignore` list of `.cargo/audit.toml`.
+fn audit_ignores() -> Vec<String> {
+    let text: String = read(".cargo/audit.toml")
+        .lines()
+        .map(|l| l.split('#').next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let Some(start) = text.find("ignore") else {
+        return Vec::new();
+    };
+    let rest = &text[start..];
+    let open = rest.find('[').expect("ignore must be an array");
+    let close = rest.find(']').expect("ignore array must be closed");
+    rest[open + 1..close]
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(String::from)
+        .collect()
+}
+
+/// Every audit exception has a row (advisory, crate, reason) in 003 plan §Supply chain (FR-041).
+#[test]
+fn audit_ignores_are_justified_in_the_plan() {
+    let plan = read("docs/specs/003-security/plan.md");
+    let section = plan
+        .split_once("\n## Supply chain")
+        .map(|(_, rest)| rest.split("\n## ").next().unwrap_or(rest))
+        .expect("003 plan must have a Supply chain section");
+    for id in audit_ignores() {
+        let row = section
+            .lines()
+            .map(str::trim)
+            .find(|l| l.starts_with(&format!("| {id} |")))
+            .unwrap_or_else(|| {
+                panic!("{id} is ignored in .cargo/audit.toml without a plan §Supply chain row")
+            });
+        let cells: Vec<&str> = row
+            .trim_matches('|')
+            .split('|')
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .collect();
+        assert!(
+            cells.len() >= 3,
+            "the §Supply chain row for {id} must name the advisory, the crate, and why it does not apply"
+        );
+    }
 }
