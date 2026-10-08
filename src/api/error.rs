@@ -209,6 +209,24 @@ impl ApiError {
         )
     }
 
+    /// `429 RATE_LIMITED` with `Retry-After` (FR-023): `limit` states the limit, the
+    /// message ends with when to retry.
+    pub fn rate_limited(limit: &str, retry_after: u64) -> Self {
+        let unit = if retry_after == 1 {
+            "second"
+        } else {
+            "seconds"
+        };
+        Self {
+            retry_after: Some(retry_after),
+            ..Self::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "RATE_LIMITED",
+                format!("{limit} Retry in {retry_after} {unit}."),
+            )
+        }
+    }
+
     /// `503` under load (capacity, hashing, limiter table), `Retry-After: 1` (research R14).
     pub fn busy() -> Self {
         Self {
