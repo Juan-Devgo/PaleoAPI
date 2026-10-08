@@ -11,6 +11,8 @@ use sqlx::PgPool;
 
 use super::Security;
 use super::accounts::{self, ACTIVE, ADMIN};
+use super::client_ip;
+use super::rate_limit::Decision;
 use super::token::{self, Rejection};
 use crate::api::ROUTES;
 use crate::api::error::{ApiError, TokenProblem};
@@ -19,6 +21,13 @@ use crate::api::error::{ApiError, TokenProblem};
 pub const API_PREFIX: &str = "/api/v1";
 /// The only non-safe route that needs no token (FR-015).
 pub const LOGIN_PATH: &str = "/api/v1/auth/login";
+
+/// Response headers readable by browser scripts (research R4).
+pub const EXPOSED_HEADERS: &str = "ETag, Retry-After, RateLimit, RateLimit-Policy";
+/// `RateLimit` (draft-ietf-httpapi-ratelimit-headers-11).
+const RATELIMIT: &str = "ratelimit";
+/// `RateLimit-Policy` (draft-ietf-httpapi-ratelimit-headers-11).
+const RATELIMIT_POLICY: &str = "ratelimit-policy";
 
 /// Stored in the request extensions by [`require_admin`] after a successful check
 /// (data-model §2); write handlers require it through `api::auth::admin`.
@@ -148,12 +157,55 @@ pub async fn security_headers(
     );
     headers.insert(
         header::ACCESS_CONTROL_EXPOSE_HEADERS,
-        HeaderValue::from_static("ETag"),
+        HeaderValue::from_static(EXPOSED_HEADERS),
     );
     if !safe {
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
     Ok(res.map_into_boxed_body())
+}
+
+/// Plan §Request pipeline 3: resolves the [`client_ip::ClientKey`] into the request extensions
+/// (research R5), counts the request against the general limit, and answers `429` over
+/// it; every response from here inward carries `RateLimit` and `RateLimit-Policy`
+/// (research R2, R4). A limiter failure denies the request (research R14). Nothing here
+/// reads `User-Agent` (FR-027) or touches the database (FR-025).
+pub async fn rate_limit(
+    req: ServiceRequest,
+    next: Next<impl MessageBody + 'static>,
+) -> Result<ServiceResponse<BoxBody>, Error> {
+    let Some(security) = req.app_data::<web::Data<Security>>().cloned() else {
+        return Ok(req.into_response(ApiError::internal().error_response()));
+    };
+    let peer = req.peer_addr().map(|addr| addr.ip());
+    let key = client_ip::resolve(peer, req.headers(), &security.config().trusted_proxies);
+    req.extensions_mut().insert(key);
+    let limiter = security.general();
+    let decision = match limiter.check(key, security.now()) {
+        Ok(decision) => decision,
+        Err(err) => return Ok(req.into_response(ApiError::from(err).error_response())),
+    };
+    let mut res = match decision {
+        Decision::Reject { retry_after, .. } => {
+            let limit = format!(
+                "Too many requests: the limit is {} requests per minute (bursts up to {}).",
+                limiter.per_minute(),
+                limiter.burst()
+            );
+            req.into_response(ApiError::rate_limited(&limit, retry_after).error_response())
+        }
+        Decision::Allow { .. } => next.call(req).await?.map_into_boxed_body(),
+    };
+    let headers = res.headers_mut();
+    for (name, value) in [
+        (RATELIMIT, decision.header()),
+        (RATELIMIT_POLICY, limiter.policy()),
+    ] {
+        if let Ok(value) = HeaderValue::from_str(&value) {
+            headers.insert(header::HeaderName::from_static(name), value);
+        }
+    }
+    Ok(res)
 }
 
 /// Plan §Request pipeline 4.2: requests that [`needs_admin`] are answered `401` / `403`
