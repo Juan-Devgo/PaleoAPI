@@ -2,7 +2,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use actix_web::HttpServer;
-use paleo_api::api::{self, auth::AdminGate, auth::DenyAll};
+use paleo_api::api;
 use paleo_api::config::{SecurityConfig, database_options_from_env, security_config_from_env};
 use paleo_api::db::{
     MIGRATOR, STARTUP_WAIT, StartupError, api_connect_options, collation_version_warning,
@@ -39,15 +39,12 @@ async fn main() -> ExitCode {
         }
     };
     // Built before binding: computing the dummy hash is part of startup (plan §Startup contract).
-    let _security = Arc::new(Security::new(config));
+    let security = Arc::new(Security::new(config));
     let pool: PgPool = PgPoolOptions::new()
         .max_connections(10)
         .connect_lazy_with(api_connect_options(opts));
-    // Writes are denied in every build until the security spec (spec §4.4).
-    let gate: Arc<dyn AdminGate> = Arc::new(DenyAll);
-
     let server =
-        HttpServer::new(move || api::app(pool.clone(), gate.clone())).bind(("127.0.0.1", 8000));
+        HttpServer::new(move || api::app(pool.clone(), security.clone())).bind(("127.0.0.1", 8000));
 
     let result = match server {
         Ok(server) => server.run().await,
