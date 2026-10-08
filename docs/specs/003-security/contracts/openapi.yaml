@@ -1,0 +1,116 @@
+# Fragment merged into docs/openapi.yaml (the Spec 002 description) at implementation, plus a top-level
+# tag `{ name: auth, description: Admin login. }`. Same style as that file: one-line `responses:` per operation.
+#
+# Rules for every operation in docs/openapi.yaml (checked by tests/api/openapi.rs, plan §Tests):
+#   - every operation lists '429': RateLimited and '503': ServiceUnavailable
+#   - every operation with a requestBody lists '408': RequestTimeout
+#   - every POST/PATCH/DELETE keeps `security: [{ adminBearer: [] }]` and lists '401': Unauthorized, '403': Forbidden
+#   - the login operation is the only non-GET operation with `security: []`
+#
+# info.description changes:
+#   - "Writes" bullet → "Writes (POST, PATCH, DELETE) require an admin token from POST /auth/login, sent as
+#     `Authorization: Bearer <token>`. Tokens last 60 minutes. Reads ignore the Authorization header."
+#   - "When several problems apply" list gains, before 404/405: 408/414/431 request limits; 503 busy; 429 rate limit.
+#   - new bullet "Rate limits": 600 requests per minute per client with bursts up to 120 (operator-configurable);
+#     every response carries `RateLimit` and `RateLimit-Policy` (draft-ietf-httpapi-ratelimit-headers-11);
+#     `429` and `503` carry `Retry-After` in seconds; all three are readable by browser scripts.
+#   - new bullet "Limits": URL ≤ 2048 characters (414), request headers ≤ 16 KB (431), headers within 10 s and
+#     body within 30 s (408).
+#   - CORS bullet: preflight allows GET, POST, PATCH, DELETE and the Authorization, Content-Type, If-None-Match
+#     headers; credentials are never allowed.
+
+paths:
+  # ---------------------------------------------------------------- auth
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      security: []
+      description: 'Exchanges an admin username and password for a 60-minute token. Limited to 10 attempts per client and 20 failures per username per 15 minutes (operator-configurable).'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/LoginOk' }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/InvalidCredentials' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '408': { $ref: '#/components/responses/RequestTimeout' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '429': { $ref: '#/components/responses/RateLimited' }, '500': { $ref: '#/components/responses/InternalError' }, '503': { $ref: '#/components/responses/ServiceUnavailable' } }
+
+components:
+  securitySchemes:
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Token from POST /auth/login, valid 60 minutes, sent only in the Authorization header (query, cookie, and body are ignored). The account must be active; writes also need the admin role.'
+
+  headers:
+    RateLimit: { description: 'Remaining requests `r` and seconds `t` until the limit fully resets.', schema: { type: string }, example: '"general";r=117;t=1' }
+    RateLimitPolicy: { description: 'The limit: `q` requests per `w` seconds (the burst bucket).', schema: { type: string }, example: '"general";q=120;w=12' }
+    RetryAfter: { description: Seconds to wait before retrying (always at least 1)., schema: { type: integer, minimum: 1 }, example: 3 }
+    WWWAuthenticate: { schema: { type: string }, examples: { missing: { value: 'Bearer realm="paleo-api"' }, rejected: { value: 'Bearer realm="paleo-api", error="invalid_token"' } } }
+    CacheControlNoStore: { schema: { type: string, const: no-store } }
+
+  responses:
+    # Replaces the Spec 002 entries of the same name.
+    Unauthorized:
+      description: Missing, expired, or invalid token.
+      headers: { WWW-Authenticate: { $ref: '#/components/headers/WWWAuthenticate' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            missing: { value: { error: { code: UNAUTHORIZED, message: "This operation needs an admin token. Log in at POST /api/v1/auth/login and send the token as 'Authorization: Bearer <token>'." } } }
+            expired: { value: { error: { code: UNAUTHORIZED, message: 'Your token has expired. Log in again at POST /api/v1/auth/login to get a new one.' } } }
+            invalid: { value: { error: { code: UNAUTHORIZED, message: 'Your token is not valid. Log in again at POST /api/v1/auth/login to get a new one.' } } }
+    Forbidden:
+      description: Valid token of an account without the admin role.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: FORBIDDEN, message: 'This operation requires the admin role. Ask an operator to grant it to your account.' } } } }
+    # New.
+    LoginOk:
+      description: Token issued.
+      headers: { Cache-Control: { $ref: '#/components/headers/CacheControlNoStore' } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/LoginEnvelope' } } }
+    InvalidCredentials:
+      description: Unknown username, wrong password, or disabled account; the three are indistinguishable.
+      headers: { WWW-Authenticate: { $ref: '#/components/headers/WWWAuthenticate' }, Cache-Control: { $ref: '#/components/headers/CacheControlNoStore' } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: INVALID_CREDENTIALS, message: 'Wrong username or password.' } } } }
+    RequestTimeout:
+      description: The body did not arrive within 30 seconds. The connection is closed.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: REQUEST_TIMEOUT, message: 'The request took too long to send: the body must arrive within 30 seconds. Send it again.' } } } }
+    UriTooLong:
+      description: The request target is longer than 2048 characters. Possible on every path.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: URI_TOO_LONG, message: 'The URL is too long: the limit is 2048 characters. Shorten the query.' } } } }
+    HeadersTooLarge:
+      description: The request headers exceed 16 KB in total. Possible on every path.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: REQUEST_HEADERS_TOO_LARGE, message: 'The request headers are too large: the limit is 16 KB in total. Remove unneeded headers or cookies.' } } } }
+    RateLimited:
+      description: A rate limit was exceeded. Requests rejected this way do not extend the wait.
+      headers: { Retry-After: { $ref: '#/components/headers/RetryAfter' }, RateLimit: { $ref: '#/components/headers/RateLimit' }, RateLimit-Policy: { $ref: '#/components/headers/RateLimitPolicy' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            general: { value: { error: { code: RATE_LIMITED, message: 'Too many requests: the limit is 600 requests per minute (bursts up to 120). Retry in 3 seconds.' } } }
+            loginClient: { value: { error: { code: RATE_LIMITED, message: 'Too many login attempts from your address: the limit is 10 per 15 minutes. Retry in 412 seconds.' } } }
+            loginUsername: { value: { error: { code: RATE_LIMITED, message: 'Too many failed logins for this username: the limit is 20 per 15 minutes. Retry in 412 seconds.' } } }
+    ServiceUnavailable:
+      description: The API is at capacity or the database is unavailable or too slow. Nothing was changed.
+      headers: { Retry-After: { $ref: '#/components/headers/RetryAfter' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            busy: { value: { error: { code: SERVICE_UNAVAILABLE, message: 'The API is busy. Retry in 1 second.' } } }
+            database: { value: { error: { code: SERVICE_UNAVAILABLE, message: 'The service is temporarily unavailable. Retry in 5 seconds.' } } }
+
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1 }
+        password: { type: string, minLength: 1, maxLength: 128, format: password }
+    LoginResponse:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer, const: 3600 }
+    LoginEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/LoginResponse' } } }
