@@ -195,7 +195,7 @@ Added to Spec 002 §4.12.
 | III. High Performance | ✅ Rejections do no database work (FR-025); the read target holds with limits on (FR-026, AC 12). |
 | IV. Test-First | ✅ Every FR maps to an acceptance criterion testable against the real database. |
 | V. Data Integrity | ✅ Account rules enforced by the database (FR-006). |
-| VI. Simplicity | ✅ One login endpoint; no refresh tokens, signup, MFA, or revocation lists (FR-010). ⚠️ Rate-limit counters are short-lived state; whether they live in PostgreSQL or in process memory (a deviation from "all state lives in PostgreSQL") is a plan decision that the plan must justify. |
+| VI. Simplicity | ✅ One login endpoint; no refresh tokens, signup, MFA, or revocation lists (FR-010). Rate-limit and login-attempt counters and concurrency permits are short-lived abuse-control state; keeping them in process memory complies with constitution 1.2.0 Principle VI and is not a deviation. |
 
 ## Out of Scope
 
