@@ -48,16 +48,19 @@ Do not add dependencies outside this table without justifying them in the plan.
 
 ```bash
 cargo install sqlx-cli --no-default-features --features postgres   # once: sqlx-cli 0.9
+cargo install cargo-audit --locked         # once: dependency vulnerability scanner
 cp .env.example .env                       # once: then replace every "change-me" placeholder
 set -a; . ./.env; set +a                   # export the variables (the API does not read .env)
 docker compose up -d --wait db             # start PostgreSQL and wait until it is ready
 sqlx migrate run                           # apply migrations (the API never applies them)
 cargo run                                  # run the API
+cargo run --bin paleo-accounts -- <command>   # accounts: create <username> [--admin], set-password|grant-admin|revoke-admin|disable|enable <username>, list (password on stdin)
 DATABASE_URL="$TEST_DATABASE_URL" cargo test   # unit + integration tests
 cargo fmt --check                          # formatting
 cargo clippy --all-targets -- -D warnings  # lints
 cargo sqlx prepare -- --all-targets        # after changing a query! macro: regenerate .sqlx/ (dev DATABASE_URL) and commit it
 cargo sqlx prepare --check -- --all-targets   # .sqlx/ matches every query! macro
+cargo audit                                # no known vulnerabilities in Cargo.lock
 ```
 
 Never run plain `cargo test` with the development `DATABASE_URL`: the test harness would write its bookkeeping schema into the development database (the run fails; cleanup in `docs/specs/001-database/quickstart.md` §5).
@@ -99,6 +102,7 @@ A change is done only when:
 4. New/changed endpoints are documented (OpenAPI spec kept in sync).
 5. New queries used by public endpoints are indexed and respect the performance targets.
 6. No secrets, credentials, or `.env` files are committed.
+7. `cargo audit` passes (no known vulnerabilities in dependencies).
 
 ---
 
