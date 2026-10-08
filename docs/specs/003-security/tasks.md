@@ -25,7 +25,7 @@
 - [X] T018 Write login and write-check lookup tests (plan §Cases `tests/db/accounts.rs`) in `tests/db/accounts.rs`
 - [X] T019 [P] Write `Security` construction unit tests (plan §Cases `src/security/*`) in `src/security/mod.rs`
 - [X] T020 Implement `security_config_from_env`, the new `StartupError` variants, and the `DB_TIMEOUT` constant (plan §Configuration, §Startup contract) in `src/config.rs`, `src/db.rs`
-- [ ] T021 Implement `ClientKey`, `TrustedProxies`, `resolve` (research R5; data-model §3.1) in `src/security/client_ip.rs`
+- [X] T021 Implement `ClientKey`, `TrustedProxies`, `resolve` (research R5; data-model §3.1) in `src/security/client_ip.rs`
 - [ ] T022 Implement hash, blocking-pool verify, dummy hash, password policy (research R8, R9) in `src/security/password.rs`
 - [ ] T023 Implement `Claims`, `issue`, `verify` → `Expired | Invalid` (research R6; data-model §2) in `src/security/token.rs`
 - [ ] T024 Implement `EventSink`, `Event`, stdout and capture sinks (research R17; contracts/security-events.md) in `src/security/events.rs`

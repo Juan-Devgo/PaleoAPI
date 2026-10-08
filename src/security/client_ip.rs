@@ -1,7 +1,7 @@
 //! Client identification for limits and logs (FR-019, research R5, data-model §3.1).
 
 use std::fmt;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use actix_web::http::header::HeaderMap;
 
@@ -17,15 +17,29 @@ impl ClientKey {
     pub const UNKNOWN: ClientKey = ClientKey::V4([0, 0, 0, 0]);
 
     /// Folds IPv4-mapped IPv6 to IPv4 and IPv6 to its /64 prefix.
-    pub fn from_ip(_ip: IpAddr) -> Self {
-        todo!()
+    pub fn from_ip(ip: IpAddr) -> Self {
+        match normalize(ip) {
+            IpAddr::V4(v4) => Self::V4(v4.octets()),
+            IpAddr::V6(v6) => {
+                let mut prefix = [0u8; 8];
+                prefix.copy_from_slice(&v6.octets()[..8]);
+                Self::V6(prefix)
+            }
+        }
     }
 }
 
 impl fmt::Display for ClientKey {
     /// `203.0.113.7` or `2001:db8:1:2::/64` (contracts/security-events.md).
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::V4(octets) => write!(f, "{}", Ipv4Addr::from(*octets)),
+            Self::V6(prefix) => {
+                let mut full = [0u8; 16];
+                full[..8].copy_from_slice(prefix);
+                write!(f, "{}/64", Ipv6Addr::from(full))
+            }
+        }
     }
 }
 
@@ -38,28 +52,111 @@ pub struct TrustedProxies {
 impl TrustedProxies {
     /// Parses comma-separated IPs or CIDRs; empty means none.
     /// The error is the first entry that is not an address or CIDR range.
-    pub fn parse(_value: &str) -> Result<Self, String> {
-        todo!()
+    pub fn parse(value: &str) -> Result<Self, String> {
+        if value.trim().is_empty() {
+            return Ok(Self::default());
+        }
+        let nets = value
+            .split(',')
+            .map(|raw| {
+                let entry = raw.trim();
+                parse_net(entry).ok_or_else(|| entry.to_string())
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self { nets })
     }
 
     pub fn is_empty(&self) -> bool {
         self.nets.is_empty()
     }
 
-    pub fn contains(&self, _ip: IpAddr) -> bool {
-        todo!()
+    pub fn contains(&self, ip: IpAddr) -> bool {
+        let ip = normalize(ip);
+        self.nets
+            .iter()
+            .any(|(net, prefix)| net.is_ipv4() == ip.is_ipv4() && mask(ip, *prefix) == *net)
     }
 }
 
-/// The client of a request: the peer, or the rightmost untrusted `X-Forwarded-For`
-/// entry when the peer is a trusted proxy (research R5).
-pub fn resolve(
-    _peer: Option<IpAddr>,
-    _headers: &HeaderMap,
-    _trusted: &TrustedProxies,
-) -> ClientKey {
-    todo!()
+/// IPv4-mapped IPv6 (`::ffff:a.b.c.d`) as IPv4.
+fn normalize(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+        IpAddr::V4(_) => ip,
+    }
 }
+
+/// `ip` with every bit after `prefix` cleared.
+fn mask(ip: IpAddr, prefix: u8) -> IpAddr {
+    match ip {
+        IpAddr::V4(v4) => {
+            let bits = u32::from(v4);
+            let keep = u32::MAX.checked_shl(32 - u32::from(prefix)).unwrap_or(0);
+            IpAddr::V4(Ipv4Addr::from(bits & keep))
+        }
+        IpAddr::V6(v6) => {
+            let bits = u128::from(v6);
+            let keep = u128::MAX.checked_shl(128 - u32::from(prefix)).unwrap_or(0);
+            IpAddr::V6(Ipv6Addr::from(bits & keep))
+        }
+    }
+}
+
+/// `addr` or `addr/prefix`; a mapped IPv4 address with no prefix or one of 96 or more
+/// becomes the IPv4 network it denotes.
+fn parse_net(entry: &str) -> Option<(IpAddr, u8)> {
+    let (addr, prefix) = match entry.split_once('/') {
+        Some((addr, prefix)) => (addr, Some(prefix)),
+        None => (entry, None),
+    };
+    let mut ip: IpAddr = addr.parse().ok()?;
+    let mut prefix: Option<u8> = match prefix {
+        None => None,
+        Some(p) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => Some(p.parse().ok()?),
+        Some(_) => return None,
+    };
+    if let IpAddr::V6(v6) = ip
+        && let Some(v4) = v6.to_ipv4_mapped()
+        && prefix.is_none_or(|p| p >= 96)
+    {
+        ip = IpAddr::V4(v4);
+        prefix = prefix.map(|p| p - 96);
+    }
+    let max = if ip.is_ipv4() { 32 } else { 128 };
+    let prefix = prefix.unwrap_or(max);
+    (prefix <= max).then(|| (mask(ip, prefix), prefix))
+}
+
+/// The client of a request: the peer, or the rightmost untrusted `X-Forwarded-For`
+/// entry when the peer is a trusted proxy (research R5). `X-Forwarded-For` field lines
+/// are read in order and their entries right to left; an entry that is not an IP address
+/// stops the walk at the hop to its right.
+pub fn resolve(peer: Option<IpAddr>, headers: &HeaderMap, trusted: &TrustedProxies) -> ClientKey {
+    let Some(peer) = peer else {
+        return ClientKey::UNKNOWN;
+    };
+    let mut client = normalize(peer);
+    if !trusted.contains(client) {
+        return ClientKey::from_ip(client);
+    }
+    let entries: Vec<Option<IpAddr>> = headers
+        .get_all(X_FORWARDED_FOR)
+        .flat_map(|line| match line.to_str() {
+            Ok(text) => text.split(',').map(|e| e.trim().parse().ok()).collect(),
+            Err(_) => vec![None],
+        })
+        .collect();
+    for entry in entries.iter().rev() {
+        let Some(ip) = entry else { break };
+        client = normalize(*ip);
+        if !trusted.contains(client) {
+            break;
+        }
+    }
+    ClientKey::from_ip(client)
+}
+
+const X_FORWARDED_FOR: &str = "x-forwarded-for";
 
 #[cfg(test)]
 mod tests {
