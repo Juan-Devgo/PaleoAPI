@@ -1,0 +1,8 @@
+# cargo-audit configuration (Spec 003 FR-041).
+# Every ignored advisory needs a row in docs/specs/003-security/plan.md §Supply chain
+# naming the advisory, the affected crate, and why it does not apply.
+
+[advisories]
+ignore = [
+    "RUSTSEC-2023-0071", # rsa via jsonwebtoken rust_crypto: see plan §Supply chain
+]
