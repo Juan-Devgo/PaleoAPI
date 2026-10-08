@@ -42,7 +42,7 @@
 - [X] T031 [US1] Rework helpers to seeded accounts (with `SecuritySettings::seed`) and real tokens, delete the test-token file, declare `mod security` with every submodule as an empty file, remove the `#[path = "api/tokens.rs"] mod tokens` include and its check (h) request (plan §Helpers, §Existing tests) in `tests/api/support.rs`, `tests/api/tokens.rs`, `tests/api/main.rs`, `tests/api/security/mod.rs`, `tests/startup.rs`
 - [X] T032 [P] [US1] Write login tests for AC 1 with the helper-seeded admin, wrong password → `401 INVALID_CREDENTIALS`, AC 7 (`422` without hashing), and roleless login (plan §Cases `security/login.rs`) in `tests/api/security/login.rs`
 - [X] T033 [P] [US1] Write token rejection tests (plan §Cases `security/tokens.rs`) in `tests/api/security/tokens.rs`
-- [ ] T034 [P] [US1] Write write-authorization tests (plan §Cases `security/write_auth.rs`) in `tests/api/security/write_auth.rs`
+- [X] T034 [P] [US1] Write write-authorization tests (plan §Cases `security/write_auth.rs`) in `tests/api/security/write_auth.rs`
 - [ ] T035 [P] [US1] Replace test-token constants and `401` message expectations (plan §Existing tests `global.rs`) in `tests/api/global.rs`
 - [ ] T036 [P] [US1] Replace check (h) deny with no-token and forged-token writes → `401 UNAUTHORIZED` (plan §Existing tests `tests/startup.rs`) in `tests/startup.rs`
 - [ ] T037 [P] [US1] Remove the retired token and gate checks (plan §Existing tests `tests/repo_hygiene.rs`) in `tests/repo_hygiene.rs`
