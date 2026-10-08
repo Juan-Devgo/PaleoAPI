@@ -20,6 +20,7 @@ use crate::config::SecurityConfig;
 use clock::{Clock, SystemClock};
 use events::{Event, EventSink, StdoutSink};
 use permits::Permits;
+use rate_limit::RateLimiter;
 use token::Keys;
 
 /// Limiter table capacities (data-model §3.2, §3.3). Overridable in tests.
@@ -47,6 +48,7 @@ pub struct Security {
     keys: Keys,
     requests: Arc<Permits>,
     hashes: Arc<Permits>,
+    general: RateLimiter,
     clock: Arc<dyn Clock>,
     sink: Arc<dyn EventSink>,
     dummy_hash: String,
@@ -75,6 +77,11 @@ impl Security {
             keys: Keys::new(config.jwt_secret.expose()),
             requests: Permits::new(config.max_concurrent_requests),
             hashes: Permits::new(config.max_concurrent_password_hashes),
+            general: RateLimiter::new(
+                config.rate_limit_per_minute,
+                config.rate_limit_burst,
+                capacities.general_clients,
+            ),
             dummy_hash: password::dummy_hash(),
             config,
             capacities,
@@ -108,6 +115,11 @@ impl Security {
     /// Password verification permits (`MAX_CONCURRENT_PASSWORD_HASHES`).
     pub fn hashes(&self) -> &Arc<Permits> {
         &self.hashes
+    }
+
+    /// The general per-client limit (FR-021, data-model §3.2).
+    pub fn general(&self) -> &RateLimiter {
+        &self.general
     }
 
     /// Hash verified for unknown usernames so every failed login costs the same (research R8).

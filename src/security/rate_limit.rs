@@ -1,7 +1,7 @@
 //! General per-client limit: sharded GCRA table (FR-021, FR-023, FR-024, data-model §3.2).
 
 use std::collections::HashMap;
-use std::hash::RandomState;
+use std::hash::{BuildHasher, RandomState};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -49,47 +49,126 @@ pub struct RateLimiter {
     per_shard: usize,
     per_minute: u32,
     burst: u32,
+    /// `T`: the emission interval, 60 s / per-minute.
     period: Duration,
+    /// `τ`: `T × burst`.
     tau: Duration,
+    /// `w` of `RateLimit-Policy`: ⌈burst × 60 / per-minute⌉ seconds.
     window: u64,
+}
+
+/// Whole seconds, rounded up.
+fn ceil_secs(d: Duration) -> u64 {
+    u64::try_from(d.as_nanos().div_ceil(1_000_000_000)).unwrap_or(u64::MAX)
 }
 
 impl RateLimiter {
     /// A table for `per_minute` requests with bursts of `burst`, holding up to
     /// `capacity` clients.
     pub fn new(per_minute: u32, burst: u32, capacity: usize) -> Self {
-        let _ = (per_minute, burst, capacity);
-        todo!("T049")
+        let per_minute = per_minute.max(1);
+        let burst = burst.max(1);
+        let period = Duration::from_nanos(60_000_000_000 / u64::from(per_minute));
+        Self {
+            shards: std::array::from_fn(|_| Mutex::new(HashMap::new())),
+            hasher: RandomState::new(),
+            per_shard: capacity.div_ceil(SHARDS).max(1),
+            per_minute,
+            burst,
+            period,
+            tau: period * burst,
+            window: (u64::from(burst) * 60).div_ceil(u64::from(per_minute)),
+        }
     }
 
-    /// Counts a request of `key` at `now`.
+    pub fn per_minute(&self) -> u32 {
+        self.per_minute
+    }
+
+    pub fn burst(&self) -> u32 {
+        self.burst
+    }
+
+    /// Counts a request of `key` at `now` (data-model §3.2).
     pub fn check(&self, key: ClientKey, now: Instant) -> Result<Decision, LimitError> {
-        let _ = (key, now);
-        todo!("T049")
+        let mut shard = self.shards[self.shard_index(&key)]
+            .lock()
+            .map_err(|_| LimitError::Poisoned)?;
+        if !shard.contains_key(&key) && shard.len() >= self.per_shard {
+            shard.retain(|_, entry| !self.is_stale(entry, now));
+            if shard.len() >= self.per_shard {
+                return Err(LimitError::Full);
+            }
+        }
+        let entry = shard.entry(key).or_insert(Entry {
+            tat: now,
+            last_logged: None,
+        });
+        let base = entry.tat.max(now);
+        let ahead = base - now + self.period;
+        if ahead > self.tau {
+            let log = entry
+                .last_logged
+                .is_none_or(|at| now.saturating_duration_since(at) >= self.window());
+            if log {
+                entry.last_logged = Some(now);
+            }
+            return Ok(Decision::Reject {
+                retry_after: ceil_secs(ahead - self.tau).max(1),
+                reset: ceil_secs(entry.tat.saturating_duration_since(now)),
+                log,
+            });
+        }
+        entry.tat = base + self.period;
+        let used = entry.tat - now;
+        let remaining = (self.tau - used).as_nanos() / self.period.as_nanos();
+        Ok(Decision::Allow {
+            remaining: u64::try_from(remaining).unwrap_or(u64::MAX),
+            reset: ceil_secs(used),
+        })
     }
 
     /// `RateLimit-Policy`: `"general";q=<burst>;w=<seconds>` (research R4).
     pub fn policy(&self) -> String {
-        todo!("T049")
+        format!(r#""general";q={};w={}"#, self.burst, self.window)
+    }
+
+    fn window(&self) -> Duration {
+        Duration::from_secs(self.window)
+    }
+
+    /// An entry equal to a fresh one whose last logged rejection is outside the window.
+    fn is_stale(&self, entry: &Entry, now: Instant) -> bool {
+        entry.tat <= now
+            && entry
+                .last_logged
+                .is_none_or(|at| now.saturating_duration_since(at) >= self.window())
     }
 
     fn shard_index(&self, key: &ClientKey) -> usize {
-        let _ = key;
-        todo!("T049")
+        // Truncation is fine: only the remainder matters.
+        (self.hasher.hash_one(key) as usize) % SHARDS
     }
 }
 
 impl Decision {
     /// `RateLimit`: `"general";r=<remaining>;t=<reset>` (research R4); `r=0` on reject.
     pub fn header(&self) -> String {
-        todo!("T049")
+        let (remaining, reset) = match *self {
+            Self::Allow { remaining, reset } => (remaining, reset),
+            Self::Reject { reset, .. } => (0, reset),
+        };
+        format!(r#""general";r={remaining};t={reset}"#)
     }
 }
 
+/// Fail closed (research R14): a full table is load (`503`), a poisoned lock a defect (`500`).
 impl From<LimitError> for ApiError {
     fn from(err: LimitError) -> Self {
-        let _ = err;
-        todo!("T049")
+        match err {
+            LimitError::Full => ApiError::busy(),
+            LimitError::Poisoned => ApiError::internal(),
+        }
     }
 }
 
