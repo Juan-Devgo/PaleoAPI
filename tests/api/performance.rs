@@ -1,5 +1,6 @@
 //! Server-side latency of every read shape on the 001 fixture: p95 < 50 ms
-//! (Constitution III, spec §7, research R11).
+//! (Constitution III, spec §7, research R11), with the 003 rate limiter in the path
+//! (003 FR-026; test limits, so no request is rejected).
 
 use std::time::{Duration, Instant};
 
@@ -92,6 +93,7 @@ async fn every_read_shape_meets_the_p95_budget(pool_opts: PgPoolOptions, opts: P
             let resp = get(&app, &uri).await;
             times.push(t.elapsed());
             assert_eq!(resp.status.as_u16(), 200);
+            assert!(resp.header("ratelimit").is_some(), "{uri}: limiter not run");
         }
         times.sort();
         let p95 = times[RUNS * 95 / 100 - 1];

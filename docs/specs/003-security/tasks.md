@@ -64,7 +64,7 @@
 - [X] T050 [US3] Add `RATE_LIMITED` with `Retry-After` (spec §Error Codes) in `src/api/error.rs`
 - [X] T051 [US3] Implement the `rate_limit` layer with `RateLimit` / `RateLimit-Policy`, poisoned shard → `500` (research R14), and add the headers to the exposed headers in `security_headers` (research R2, R4, R5) in `src/security/middleware.rs`
 - [X] T052 [US3] Wire `rate_limit` (plan §Request pipeline 3) in `src/api/mod.rs`
-- [ ] T053 [US3] Run the latency test with the limiter enabled (plan §Existing tests) in `tests/api/performance.rs`
+- [X] T053 [US3] Run the latency test with the limiter enabled (plan §Existing tests) in `tests/api/performance.rs`
 
 ## Phase 5: US4 — One client cannot exhaust the API (P1)
 
