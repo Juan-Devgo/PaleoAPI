@@ -1,6 +1,9 @@
-//! Table `accounts`: constraints, credential-version trigger, and TRUNCATE guard
-//! (003 data-model §1; AC 24, FR-005, FR-006).
+//! Table `accounts`: constraints, credential-version trigger, TRUNCATE guard, and the
+//! login and write-check lookups (003 data-model §1; AC 24, FR-005, FR-006).
 
+use paleo_api::security::accounts::{
+    LoginAccount, WriteCheckAccount, find_for_login, find_for_write_check,
+};
 use sqlx::PgPool;
 
 use crate::support::{accepts, rejects};
@@ -216,4 +219,57 @@ async fn truncate_is_rejected(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(n, 1);
+}
+
+// ---------------------------------------------------------------- lookups (data-model §1.1)
+
+#[sqlx::test]
+async fn login_lookup_returns_the_stored_credentials(pool: PgPool) {
+    assert_eq!(find_for_login(&pool, "alice").await.unwrap(), None);
+    alice(&pool).await;
+    accepts(
+        &pool,
+        format!(
+            "UPDATE accounts SET password_hash = '{OTHER_HASH}', status = 'disabled' \
+             WHERE username = 'alice'"
+        ),
+    )
+    .await;
+    assert_eq!(
+        find_for_login(&pool, "alice").await.unwrap(),
+        Some(LoginAccount {
+            password_hash: OTHER_HASH.into(),
+            status: "disabled".into(),
+            credentials_version: 2,
+        })
+    );
+    assert_eq!(find_for_login(&pool, "Alice").await.unwrap(), None);
+    assert_eq!(
+        find_for_login(&pool, "alice' OR '1'='1").await.unwrap(),
+        None
+    );
+}
+
+#[sqlx::test]
+async fn write_check_lookup_returns_role_status_and_version(pool: PgPool) {
+    assert_eq!(find_for_write_check(&pool, "alice").await.unwrap(), None);
+    alice(&pool).await;
+    accepts(&pool, insert("bob", HASH, None)).await;
+    assert_eq!(
+        find_for_write_check(&pool, "alice").await.unwrap(),
+        Some(WriteCheckAccount {
+            role: Some("admin".into()),
+            status: "active".into(),
+            credentials_version: 1,
+        })
+    );
+    assert_eq!(
+        find_for_write_check(&pool, "bob").await.unwrap(),
+        Some(WriteCheckAccount {
+            role: None,
+            status: "active".into(),
+            credentials_version: 1,
+        })
+    );
+    assert_eq!(find_for_write_check(&pool, "carol").await.unwrap(), None);
 }
