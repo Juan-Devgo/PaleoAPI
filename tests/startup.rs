@@ -1,5 +1,5 @@
 //! Runs the API binary and checks that it refuses to start safely
-//! (AC 2, AC 15, FR-002–FR-004).
+//! (AC 2, AC 15, FR-002–FR-004; Spec 003 AC 9, FR-014, FR-020).
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -15,17 +15,37 @@ mod tokens;
 const LEAKS: [&str; 2] = ["leaky_user", "leaky-secret-123"];
 const KILL_AFTER: Duration = Duration::from_secs(15);
 
+/// A valid signing secret for the binary under test (Spec 003 FR-014).
+const TEST_SECRET: &str = "startup-test-secret-0123456789abcdef";
+
+/// A URL that would fail only at connect time, after every configuration check.
+/// Built from parts so this file holds no credentialed URL literal.
+fn unreachable_url() -> String {
+    format!(
+        "{}://{}:{}@{}/{}",
+        "postgres", "leaky_user", "leaky-secret-123", "127.0.0.1:9", "paleo"
+    )
+}
+
 struct Outcome {
     status: Option<ExitStatus>,
+    stdout: String,
     stderr: String,
     elapsed: Duration,
 }
 
+/// Starts the API with `DATABASE_URL` (when given) and a valid `JWT_SECRET`.
 fn spawn_api(database_url: Option<&str>) -> Child {
+    spawn_api_env(database_url, &[("JWT_SECRET", TEST_SECRET)])
+}
+
+/// Starts the API with only `PATH`, `DATABASE_URL` (when given), and `env`.
+fn spawn_api_env(database_url: Option<&str>, env: &[(&str, &str)]) -> Child {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_paleo_api"));
     cmd.env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .stdout(Stdio::null())
+        .envs(env.iter().copied())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(url) = database_url {
         cmd.env("DATABASE_URL", url);
@@ -41,10 +61,23 @@ fn read_stderr(child: &mut Child) -> String {
     stderr
 }
 
-/// Runs the API until it exits, killing it after `KILL_AFTER`.
+fn read_stdout(child: &mut Child) -> String {
+    let mut stdout = String::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        pipe.read_to_string(&mut stdout).unwrap();
+    }
+    stdout
+}
+
+/// Runs the API with a valid `JWT_SECRET` until it exits, killing it after `KILL_AFTER`.
 fn run_api(database_url: Option<&str>) -> Outcome {
+    run_api_env(database_url, &[("JWT_SECRET", TEST_SECRET)])
+}
+
+/// Like [`run_api`] with exactly the given extra environment.
+fn run_api_env(database_url: Option<&str>, env: &[(&str, &str)]) -> Outcome {
     let started = Instant::now();
-    let mut child = spawn_api(database_url);
+    let mut child = spawn_api_env(database_url, env);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break Some(status);
@@ -59,6 +92,7 @@ fn run_api(database_url: Option<&str>) -> Outcome {
     let elapsed = started.elapsed();
     Outcome {
         status,
+        stdout: read_stdout(&mut child),
         stderr: read_stderr(&mut child),
         elapsed,
     }
@@ -147,6 +181,8 @@ async fn exec(pool: &PgPool, sql: &str) {
 #[test]
 fn refuses_without_database_url() {
     assert_refused(&run_api(None), "DATABASE_URL is not set");
+    // DATABASE_URL is checked before the security settings (Spec 003 plan §Startup contract).
+    assert_refused(&run_api_env(None, &[]), "DATABASE_URL is not set");
 }
 
 // (b)
@@ -292,4 +328,84 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
         "writes must be denied: {denied}"
     );
     assert!(denied.contains("\"UNAUTHORIZED\""), "{denied}");
+}
+
+// ---------------------------------------------------------------- Spec 003 settings (AC 9)
+
+/// Refused before any connection attempt, without printing `secret`.
+#[track_caller]
+fn assert_secret_refused(env: &[(&str, &str)], secret: &str, gist: &str) {
+    let out = run_api_env(Some(&unreachable_url()), env);
+    assert_refused(&out, gist);
+    assert!(
+        out.elapsed < Duration::from_secs(5),
+        "checked before connecting; took {:?}",
+        out.elapsed
+    );
+    if !secret.is_empty() {
+        assert!(!out.stderr.contains(secret), "stderr leaks the secret");
+        assert!(!out.stdout.contains(secret), "stdout leaks the secret");
+    }
+}
+
+#[test]
+fn refuses_without_a_signing_secret() {
+    assert_secret_refused(&[], "", "JWT_SECRET is not set");
+    assert_secret_refused(&[("JWT_SECRET", "")], "", "JWT_SECRET is not set");
+}
+
+#[test]
+fn refuses_a_secret_shorter_than_32_bytes() {
+    let secret = "short-secret-0123456789abcdefgh";
+    assert_eq!(secret.len(), 31);
+    assert_secret_refused(
+        &[("JWT_SECRET", secret)],
+        secret,
+        "JWT_SECRET is shorter than 32 bytes",
+    );
+}
+
+#[test]
+fn refuses_the_placeholder_secret() {
+    let example = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/.env.example"))
+        .expect(".env.example must exist");
+    let placeholder = example
+        .lines()
+        .find_map(|l| l.strip_prefix("JWT_SECRET="))
+        .expect(".env.example must set JWT_SECRET");
+    assert_secret_refused(
+        &[("JWT_SECRET", placeholder)],
+        placeholder,
+        "JWT_SECRET is still the placeholder",
+    );
+}
+
+#[test]
+fn refuses_an_invalid_limit_setting_naming_the_variable() {
+    let out = run_api_env(
+        Some(&unreachable_url()),
+        &[("JWT_SECRET", TEST_SECRET), ("RATE_LIMIT_BURST", "0")],
+    );
+    assert_refused(
+        &out,
+        "RATE_LIMIT_BURST must be an integer from 1 to 1000000.",
+    );
+    assert!(
+        out.elapsed < Duration::from_secs(5),
+        "took {:?}",
+        out.elapsed
+    );
+    assert!(!out.stderr.contains(TEST_SECRET));
+
+    let out = run_api_env(
+        Some(&unreachable_url()),
+        &[
+            ("JWT_SECRET", TEST_SECRET),
+            ("TRUSTED_PROXIES", "proxy.local"),
+        ],
+    );
+    assert_refused(
+        &out,
+        "TRUSTED_PROXIES entry 'proxy.local' is not an IP address or CIDR range.",
+    );
 }
