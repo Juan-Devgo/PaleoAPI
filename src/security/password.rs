@@ -3,6 +3,9 @@
 
 use std::fmt;
 
+use argon2::password_hash::{self, generate_salt};
+use argon2::{Algorithm, Argon2, Params, PasswordHash, PasswordHasher, PasswordVerifier, Version};
+
 /// Password length bounds in Unicode scalar values (FR-004).
 pub const MIN_CHARS: usize = 12;
 pub const MAX_CHARS: usize = 128;
@@ -16,14 +19,40 @@ pub enum PolicyError {
 }
 
 impl fmt::Display for PolicyError {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Length(n) => write!(
+                f,
+                "the password must be {MIN_CHARS}–{MAX_CHARS} characters (got {n})."
+            ),
+            Self::EqualsUsername => f.write_str("the password must not be the username."),
+        }
     }
 }
 
-/// Checks FR-004 before hashing.
-pub fn check_policy(_username: &str, _password: &str) -> Result<(), PolicyError> {
-    todo!()
+impl std::error::Error for PolicyError {}
+
+/// Checks FR-004 before hashing: length in Unicode scalar values, then equality with
+/// the username ignoring case (research R9).
+pub fn check_policy(username: &str, password: &str) -> Result<(), PolicyError> {
+    let n = password.chars().count();
+    if !(MIN_CHARS..=MAX_CHARS).contains(&n) {
+        return Err(PolicyError::Length(n));
+    }
+    if password.to_lowercase() == username.to_lowercase() {
+        return Err(PolicyError::EqualsUsername);
+    }
+    Ok(())
+}
+
+/// Argon2id parameters of research R8: 19 MiB, two passes, one lane.
+const PARAMS: Params = match Params::new(19_456, 2, 1, None) {
+    Ok(params) => params,
+    Err(_) => panic!("invalid Argon2 parameters"),
+};
+
+fn hasher() -> Argon2<'static> {
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, PARAMS)
 }
 
 /// Hashing failed (never expected with the fixed parameters).
@@ -39,13 +68,17 @@ impl fmt::Display for HashError {
 impl std::error::Error for HashError {}
 
 /// Argon2id v19, m = 19456 KiB, t = 2, p = 1, 16-byte random salt, PHC string.
-pub fn hash(_password: &str) -> Result<String, HashError> {
-    todo!()
+pub fn hash(password: &str) -> Result<String, HashError> {
+    hasher()
+        .hash_password(password.as_bytes())
+        .map(|phc| phc.to_string())
+        .map_err(|_| HashError)
 }
 
 /// The hash of a random 32-character password, computed once at startup (research R8).
 pub fn dummy_hash() -> String {
-    todo!()
+    let password: String = generate_salt().iter().map(|b| format!("{b:02x}")).collect();
+    hash(&password).expect("Argon2id hashing with fixed parameters cannot fail")
 }
 
 /// Verification could not run: both map to `500` (research R14).
@@ -58,8 +91,23 @@ pub enum VerifyError {
 }
 
 /// Verifies `password` against `phc` on the blocking pool.
-pub async fn verify(_password: String, _phc: String) -> Result<bool, VerifyError> {
-    todo!()
+pub async fn verify(password: String, phc: String) -> Result<bool, VerifyError> {
+    actix_web::rt::task::spawn_blocking(move || verify_blocking(&password, &phc))
+        .await
+        .map_err(|_| VerifyError::Join)?
+}
+
+/// Verification with the parameters stored in `phc`.
+fn verify_blocking(password: &str, phc: &str) -> Result<bool, VerifyError> {
+    let parsed = PasswordHash::new(phc).map_err(|_| VerifyError::MalformedHash)?;
+    if parsed.salt.is_none() || parsed.hash.is_none() {
+        return Err(VerifyError::MalformedHash);
+    }
+    match hasher().verify_password(password.as_bytes(), &parsed) {
+        Ok(()) => Ok(true),
+        Err(password_hash::Error::PasswordInvalid) => Ok(false),
+        Err(_) => Err(VerifyError::MalformedHash),
+    }
 }
 
 #[cfg(test)]
