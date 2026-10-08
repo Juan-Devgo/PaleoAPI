@@ -46,7 +46,7 @@
 - [X] T035 [P] [US1] Replace test-token constants and `401` message expectations (plan §Existing tests `global.rs`) in `tests/api/global.rs`
 - [X] T036 [P] [US1] Replace check (h) deny with no-token and forged-token writes → `401 UNAUTHORIZED` (plan §Existing tests `tests/startup.rs`) in `tests/startup.rs`
 - [X] T037 [P] [US1] Remove the retired token and gate checks (plan §Existing tests `tests/repo_hygiene.rs`) in `tests/repo_hygiene.rs`
-- [ ] T038 [US1] Add `INVALID_CREDENTIALS`, `SERVICE_UNAVAILABLE` with `Retry-After`, the `401`/`403` messages, and `WWW-Authenticate` on `ApiError` (spec §Error Codes; research R14, R19; contracts/openapi.yaml) in `src/api/error.rs`
+- [X] T038 [US1] Add `INVALID_CREDENTIALS`, `SERVICE_UNAVAILABLE` with `Retry-After`, the `401`/`403` messages, and `WWW-Authenticate` on `ApiError` (spec §Error Codes; research R14, R19; contracts/openapi.yaml) in `src/api/error.rs`
 - [ ] T039 [US1] Implement `require_admin` (research R16, R19; plan §Request pipeline 4.2) in `src/security/middleware.rs`
 - [ ] T040 [US1] Implement `security_headers` replacing `DefaultHeaders` with the 002 CORS headers and `no-store` on non-safe methods (research R15) in `src/security/middleware.rs`
 - [ ] T041 [US1] Remove `AdminGate`, `DenyAll`, and their unit tests; add `admin(&req)` and the login handler (plan §Login steps 2, 3, 6–8) in `src/api/auth.rs`

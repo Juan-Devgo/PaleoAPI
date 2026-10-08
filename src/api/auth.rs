@@ -2,7 +2,7 @@
 
 use actix_web::HttpRequest;
 
-use super::error::ApiError;
+use super::error::{ApiError, TokenProblem};
 
 /// Decides whether a request may write. Runs first in every write handler.
 pub trait AdminGate: Send + Sync + 'static {
@@ -14,7 +14,7 @@ pub struct DenyAll;
 
 impl AdminGate for DenyAll {
     fn check(&self, _req: &HttpRequest) -> Result<(), ApiError> {
-        Err(ApiError::unauthorized())
+        Err(ApiError::unauthorized(TokenProblem::Missing))
     }
 }
 
