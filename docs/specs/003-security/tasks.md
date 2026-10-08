@@ -34,7 +34,7 @@
 - [X] T027 Implement the login and write-check lookups (data-model §1.1), run `sqlx migrate run` on the development database, then `cargo sqlx prepare -- --all-targets`, in `src/security/accounts.rs`, `.sqlx/`
 - [X] T028 Implement `Security` with injectable settings, clock, and sink (plan §Configuration, §Helpers) in `src/security/mod.rs`
 - [X] T029 Write startup tests: valid `JWT_SECRET` in `spawn_api`, AC 9 cases (plan §Existing tests, §Cases `tests/startup.rs`) in `tests/startup.rs`
-- [ ] T030 Implement the startup order through `Security::new` (plan §Startup contract) in `src/main.rs`
+- [X] T030 Implement the startup order through `Security::new` (plan §Startup contract) in `src/main.rs`
 
 ## Phase 3: US1 — Admin login and authenticated writes (P1, MVP)
 
