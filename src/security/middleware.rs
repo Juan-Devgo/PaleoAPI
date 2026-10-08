@@ -4,7 +4,7 @@
 use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::http::Method;
-use actix_web::http::header::{self, HeaderMap};
+use actix_web::http::header::{self, HeaderMap, HeaderValue};
 use actix_web::middleware::Next;
 use actix_web::{Error, HttpMessage, ResponseError, web};
 use sqlx::PgPool;
@@ -132,6 +132,30 @@ async fn authorize(req: &ServiceRequest) -> Result<AdminIdentity, ApiError> {
     })
 }
 
+/// Plan §Request pipeline 0, outermost: on every response the Spec 002 CORS headers, and
+/// `Cache-Control: no-store` on every response to a method other than `GET`, `HEAD`, and
+/// `OPTIONS` (login and writes, FR-035, research R15).
+pub async fn security_headers(
+    req: ServiceRequest,
+    next: Next<impl MessageBody + 'static>,
+) -> Result<ServiceResponse<BoxBody>, Error> {
+    let safe = is_safe(req.method());
+    let mut res = next.call(req).await?;
+    let headers = res.headers_mut();
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static("ETag"),
+    );
+    if !safe {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    Ok(res.map_into_boxed_body())
+}
+
 /// Plan §Request pipeline 4.2: requests that [`needs_admin`] are answered `401` / `403`
 /// unless the token and the live account allow the write; the others pass untouched and
 /// `Authorization` is never read for them (FR-017).
@@ -155,9 +179,50 @@ pub async fn require_admin(
 
 #[cfg(test)]
 mod tests {
-    use actix_web::http::header::HeaderValue;
+    use actix_web::middleware::from_fn;
+    use actix_web::test::{self, TestRequest};
+    use actix_web::{App, HttpResponse};
 
     use super::*;
+
+    #[actix_web::test]
+    async fn security_headers_add_cors_and_no_store_on_non_safe_methods() {
+        let app = test::init_service(
+            App::new()
+                .default_service(web::to(|| async {
+                    HttpResponse::Ok()
+                        .insert_header((header::CACHE_CONTROL, "public, max-age=300"))
+                        .finish()
+                }))
+                .wrap(from_fn(security_headers)),
+        )
+        .await;
+        for method in [
+            Method::GET,
+            Method::HEAD,
+            Method::OPTIONS,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::PUT,
+        ] {
+            let req = TestRequest::default()
+                .method(method.clone())
+                .uri("/x")
+                .to_request();
+            let res = test::call_service(&app, req).await;
+            let get = |name| res.headers().get(name).and_then(|v| v.to_str().ok());
+            assert_eq!(get(header::ACCESS_CONTROL_ALLOW_ORIGIN), Some("*"));
+            assert_eq!(get(header::ACCESS_CONTROL_EXPOSE_HEADERS), Some("ETag"));
+            assert!(get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
+            let expected = if is_safe(&method) {
+                "public, max-age=300"
+            } else {
+                "no-store"
+            };
+            assert_eq!(get(header::CACHE_CONTROL), Some(expected), "{method}");
+        }
+    }
 
     fn auth(value: &[u8]) -> HeaderMap {
         let mut headers = HeaderMap::new();
