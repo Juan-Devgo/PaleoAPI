@@ -25,9 +25,31 @@ pub enum StartupError {
     Unreachable,
     AuthFailed,
     DatabaseMissing,
-    MigrationsPending { versions: Vec<i64> },
+    MigrationsPending {
+        versions: Vec<i64>,
+    },
     MigrationDirty(i64),
     MigrationModified(i64),
+    /// `JWT_SECRET` unset or empty (Spec 003 FR-014).
+    MissingSecret,
+    /// `JWT_SECRET` shorter than 32 bytes.
+    ShortSecret,
+    /// `JWT_SECRET` contains `change-me` in any case.
+    PlaceholderSecret,
+    /// A Spec 003 setting is out of range or unparsable.
+    InvalidSetting {
+        var: &'static str,
+        problem: SettingProblem,
+    },
+}
+
+/// What is wrong with a setting (Spec 003 plan §Startup contract).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingProblem {
+    /// Not an integer within `min..=max`.
+    Range { min: u64, max: u64 },
+    /// A `TRUSTED_PROXIES` entry that is not an IP address or CIDR range.
+    ProxyEntry(String),
 }
 
 impl fmt::Display for StartupError {
@@ -72,6 +94,10 @@ impl fmt::Display for StartupError {
                 "Migration {v} was modified after it was applied. \
                  Restore the original migration file or reset the database."
             ),
+            Self::MissingSecret
+            | Self::ShortSecret
+            | Self::PlaceholderSecret
+            | Self::InvalidSetting { .. } => todo!(),
         }
     }
 }
