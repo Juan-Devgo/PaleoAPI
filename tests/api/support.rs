@@ -3,48 +3,155 @@
 #![allow(dead_code)]
 
 use std::future::Future;
+use std::net::{SocketAddr, TcpListener};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
+use actix_web::http::header;
 use actix_web::http::header::HeaderMap;
 use actix_web::http::{Method, StatusCode};
 use actix_web::test::{self, TestRequest};
 use actix_web::web::Bytes;
-use actix_web::{HttpRequest, http::header};
-use paleo_api::api::auth::AdminGate;
-use paleo_api::api::error::ApiError;
+use paleo_api::config::{SecurityConfig, security_config_from_env};
 use paleo_api::db::api_connect_options;
-use serde_json::Value;
+use paleo_api::security::clock::{Clock, ManualClock, SystemClock};
+use paleo_api::security::events::CaptureSink;
+use paleo_api::security::token::{Claims, issue};
+use paleo_api::security::{Capacities, Security};
+use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 #[path = "../db/support.rs"]
 pub mod db_support;
 
-pub use crate::tokens::{TEST_ADMIN_TOKEN, TEST_USER_TOKEN};
 #[allow(unused_imports)]
 pub use db_support::{
     Chain, class, continent, country_with_continent, domain, era, exec, family, full_chain, genus,
     genus_chain, kingdom, order, period, phylum, rank, species_with_period, utc_year,
 };
 
-/// Test-only admin gate (research R4): the admin token passes, the user token is
-/// `403`, anything else `401`.
-pub struct TestGate;
+// ---------------------------------------------------------------- security (003 plan §Helpers)
 
-impl AdminGate for TestGate {
-    fn check(&self, req: &HttpRequest) -> Result<(), ApiError> {
-        let auth = req
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok());
-        match auth.and_then(|a| a.strip_prefix("Bearer ")) {
-            Some(TEST_ADMIN_TOKEN) => Ok(()),
-            Some(TEST_USER_TOKEN) => Err(ApiError::forbidden()),
-            _ => Err(ApiError::unauthorized()),
+/// Signing secret of every test app (003 FR-014: 32 bytes or more, no placeholder).
+pub const TEST_SECRET: &str = "api-test-signing-secret-0123456789abcdef";
+/// Password of the seeded accounts. Test-only; [`SEED_HASH`] is its Argon2id PHC string.
+pub const TEST_PASSWORD: &str = "paleo-test-password-2026";
+/// Precomputed so seeding costs no hashing (003 research R8 parameters).
+pub const SEED_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$cGFsZW90ZXN0c2FsdDAxNg$FxuCnQsiuG9OtdkGNc8925Tfws1BkTpzXnFdHISWNZs";
+/// Seeded account with the `admin` role.
+pub const ADMIN: &str = "admin";
+/// Seeded account without a role (writes are `403`).
+pub const USER: &str = "user";
+
+/// Test limit values: every limit at its maximum, so only tests that lower one hit it.
+const TEST_LIMITS: &[(&str, &str)] = &[
+    ("RATE_LIMIT_PER_MINUTE", "1000000"),
+    ("RATE_LIMIT_BURST", "1000000"),
+    ("LOGIN_LIMIT_PER_CLIENT", "10000"),
+    ("LOGIN_LIMIT_PER_USERNAME", "10000"),
+    ("MAX_CONCURRENT_REQUESTS", "65535"),
+    ("MAX_CONCURRENT_PASSWORD_HASHES", "64"),
+];
+
+/// Security settings read through `security_config_from_env`: `vars` over the test
+/// limits and [`TEST_SECRET`].
+pub fn security_env(vars: &[(&str, &str)]) -> SecurityConfig {
+    let vars: Vec<(String, String)> = vars
+        .iter()
+        .chain(TEST_LIMITS)
+        .chain(&[("JWT_SECRET", TEST_SECRET)])
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+    security_config_from_env(move |key| vars.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()))
+        .unwrap_or_else(|e| panic!("test security settings: {e}"))
+}
+
+/// How the app under test builds its `Security`.
+pub struct SecuritySettings {
+    pub config: SecurityConfig,
+    pub capacities: Capacities,
+    /// A [`ManualClock`] (reachable through [`TestApp::clock`]) instead of `SystemClock`.
+    pub manual_clock: bool,
+    /// Seed the [`ADMIN`] and [`USER`] accounts.
+    pub seed: bool,
+}
+
+impl Default for SecuritySettings {
+    fn default() -> Self {
+        Self {
+            config: security_env(&[]),
+            capacities: Capacities::default(),
+            manual_clock: false,
+            seed: true,
         }
     }
+}
+
+/// Inserts an active account with [`SEED_HASH`] and `role`.
+pub async fn seed_account(pool: &PgPool, username: &str, role: Option<&str>) {
+    sqlx::query("INSERT INTO accounts (username, password_hash, role) VALUES ($1, $2, $3)")
+        .bind(username)
+        .bind(SEED_HASH)
+        .bind(role)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("seed account {username}: {e}"));
+}
+
+/// A token for `username` at credential version 1 (a freshly seeded account).
+pub fn token_for(security: &Security, username: &str) -> String {
+    issue(security.keys(), &Claims::now(username, 1)).expect("test token")
+}
+
+pub fn admin_token(security: &Security) -> String {
+    token_for(security, ADMIN)
+}
+
+pub fn user_token(security: &Security) -> String {
+    token_for(security, USER)
+}
+
+/// A distinct client address per `n` (in-process requests without one share `0.0.0.0`).
+pub fn peer(n: u32) -> SocketAddr {
+    let [_, a, b, c] = n.to_be_bytes();
+    SocketAddr::from(([10, a, b, c], 40_000))
+}
+
+/// Unpadded base64url (RFC 4648 §5), for hand-built forged tokens.
+pub fn b64url(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |acc, (i, b)| acc | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..=chunk.len() {
+            out.push(ALPHABET[((n >> (18 - 6 * i)) & 63) as usize] as char);
+        }
+    }
+    out
+}
+
+/// A pool that never connects: a lazy pool on a closed local port. Any database
+/// access fails, so a status that needs none proves none happened.
+pub fn closed_pool() -> PgPool {
+    let port = TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .expect("free port")
+        .port();
+    PgPoolOptions::new()
+        .acquire_timeout(Duration::from_secs(1))
+        .connect_lazy_with(api_connect_options(
+            PgConnectOptions::new()
+                .host("127.0.0.1")
+                .port(port)
+                .username("nobody")
+                .database("nowhere"),
+        ))
 }
 
 /// A fully read response.
@@ -75,10 +182,13 @@ impl Resp {
 /// `(request, stream without Content-Length)`.
 type Call = dyn Fn(TestRequest, bool) -> Pin<Box<dyn Future<Output = Resp>>>;
 
-/// The app under test and its pool (for seeding and checks).
+/// The app under test, its pool (for seeding and checks), and its security state.
 pub struct TestApp {
     call: Box<Call>,
     pub pool: PgPool,
+    pub security: Arc<Security>,
+    sink: Arc<CaptureSink>,
+    clock: Option<Arc<ManualClock>>,
 }
 
 impl TestApp {
@@ -90,15 +200,70 @@ impl TestApp {
     pub async fn call_chunked(&self, req: TestRequest) -> Resp {
         (self.call)(req, true).await
     }
+
+    /// The manual clock (only with `SecuritySettings::manual_clock`).
+    #[track_caller]
+    pub fn clock(&self) -> &ManualClock {
+        self.clock
+            .as_deref()
+            .expect("build the app with SecuritySettings { manual_clock: true, .. }")
+    }
+
+    pub fn admin_token(&self) -> String {
+        admin_token(&self.security)
+    }
+
+    pub fn user_token(&self) -> String {
+        user_token(&self.security)
+    }
 }
 
-/// Builds the pool with the production connect options and the app with `TestGate`.
+/// Every captured security event line, parsed.
+pub fn events(app: &TestApp) -> Vec<Value> {
+    app.sink
+        .lines()
+        .iter()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("event line {l:?}: {e}")))
+        .collect()
+}
+
+/// The app with the test settings: seeded accounts, capture sink, `SystemClock`.
 pub async fn app(pool_opts: PgPoolOptions, connect_opts: PgConnectOptions) -> TestApp {
+    app_with(pool_opts, connect_opts, SecuritySettings::default()).await
+}
+
+/// Builds the pool with the production connect options and the app with `settings`.
+pub async fn app_with(
+    pool_opts: PgPoolOptions,
+    connect_opts: PgConnectOptions,
+    settings: SecuritySettings,
+) -> TestApp {
     let pool = pool_opts
         .connect_with(api_connect_options(connect_opts))
         .await
         .expect("test pool");
-    let svc = test::init_service(paleo_api::api::app(pool.clone(), Arc::new(TestGate))).await;
+    app_with_pool(pool, settings).await
+}
+
+/// The app over an existing pool (for example [`closed_pool`], with `seed: false`).
+pub async fn app_with_pool(pool: PgPool, settings: SecuritySettings) -> TestApp {
+    if settings.seed {
+        seed_account(&pool, ADMIN, Some("admin")).await;
+        seed_account(&pool, USER, None).await;
+    }
+    let sink = Arc::new(CaptureSink::default());
+    let manual = settings.manual_clock.then(|| Arc::new(ManualClock::new()));
+    let clock: Arc<dyn Clock> = match &manual {
+        Some(m) => m.clone(),
+        None => Arc::new(SystemClock),
+    };
+    let security = Arc::new(Security::with(
+        settings.config,
+        settings.capacities,
+        clock,
+        sink.clone(),
+    ));
+    let svc = test::init_service(paleo_api::api::app(pool.clone(), security.clone())).await;
     let svc = Rc::new(svc);
     TestApp {
         call: Box::new(move |req: TestRequest, chunked: bool| {
@@ -124,7 +289,24 @@ pub async fn app(pool_opts: PgPoolOptions, connect_opts: PgConnectOptions) -> Te
             })
         }),
         pool,
+        security,
+        sink,
+        clock: manual,
     }
+}
+
+/// `POST /api/v1/auth/login` from `peer`.
+pub async fn login(app: &TestApp, username: &str, password: &str, peer: SocketAddr) -> Resp {
+    app.call(
+        TestRequest::post()
+            .uri("/api/v1/auth/login")
+            .peer_addr(peer)
+            .insert_header((header::CONTENT_TYPE, "application/json"))
+            .set_payload(
+                serde_json::to_vec(&json!({ "username": username, "password": password })).unwrap(),
+            ),
+    )
+    .await
 }
 
 pub async fn get(app: &TestApp, uri: &str) -> Resp {
@@ -139,9 +321,9 @@ pub async fn get_with(app: &TestApp, uri: &str, headers: &[(&str, &str)]) -> Res
     app.call(req).await
 }
 
-/// A write as the test admin.
+/// A write as the seeded admin.
 pub async fn send(app: &TestApp, method: Method, uri: &str, json: Value) -> Resp {
-    send_as(app, method, uri, json, Some(TEST_ADMIN_TOKEN)).await
+    send_as(app, method, uri, json, Some(&app.admin_token())).await
 }
 
 /// A write with `token` (or no `Authorization` header).
@@ -163,17 +345,16 @@ pub async fn send_as(
     app.call(req).await
 }
 
-/// A `DELETE` as the test admin.
+/// A `DELETE` as the seeded admin.
 pub async fn delete(app: &TestApp, uri: &str) -> Resp {
-    app.call(
-        TestRequest::delete()
-            .uri(uri)
-            .insert_header((header::AUTHORIZATION, format!("Bearer {TEST_ADMIN_TOKEN}"))),
-    )
+    app.call(TestRequest::delete().uri(uri).insert_header((
+        header::AUTHORIZATION,
+        format!("Bearer {}", app.admin_token()),
+    )))
     .await
 }
 
-/// A write as the test admin with a raw body and optional content type.
+/// A write as the seeded admin with a raw body and optional content type.
 pub async fn send_raw(
     app: &TestApp,
     method: Method,
@@ -184,7 +365,10 @@ pub async fn send_raw(
     let mut req = TestRequest::default()
         .method(method)
         .uri(uri)
-        .insert_header((header::AUTHORIZATION, format!("Bearer {TEST_ADMIN_TOKEN}")))
+        .insert_header((
+            header::AUTHORIZATION,
+            format!("Bearer {}", app.admin_token()),
+        ))
         .set_payload(bytes);
     if let Some(ct) = content_type {
         req = req.insert_header((header::CONTENT_TYPE, ct));

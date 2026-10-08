@@ -8,10 +8,6 @@ use std::time::{Duration, Instant};
 
 use sqlx::{AssertSqlSafe, PgPool};
 
-#[path = "api/tokens.rs"]
-#[allow(dead_code)]
-mod tokens;
-
 const LEAKS: [&str; 2] = ["leaky_user", "leaky-secret-123"];
 const KILL_AFTER: Duration = Duration::from_secs(15);
 
@@ -287,18 +283,6 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
     // (h) serve: the binary serves `api::app`, not the old stub routes (AC 6.1.15).
     let served = listening
         .then(|| raw_http("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"));
-    // (h) deny: the binary installs the deny-all gate, so even the test credential is 401
-    // (AC 6.1.9, spec §4.4).
-    let denied = listening.then(|| {
-        let body = r#"{"id":"mesozoic","name":"Mesozoic","start_mya":251.902,"end_mya":66}"#;
-        raw_http(&format!(
-            "POST /api/v1/eras HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
-             Authorization: Bearer {}\r\nContent-Type: application/json\r\n\
-             Content-Length: {}\r\n\r\n{body}",
-            tokens::TEST_ADMIN_TOKEN,
-            body.len()
-        ))
-    });
     let still_running = child.try_wait().unwrap().is_none();
     child.kill().ok();
     child.wait().unwrap();
@@ -322,12 +306,6 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
         served.contains("\"ROUTE_NOT_FOUND\""),
         "GET / must answer the ROUTE_NOT_FOUND envelope: {served}"
     );
-    let denied = denied.unwrap();
-    assert!(
-        denied.starts_with("HTTP/1.1 401"),
-        "writes must be denied: {denied}"
-    );
-    assert!(denied.contains("\"UNAUTHORIZED\""), "{denied}");
 }
 
 // ---------------------------------------------------------------- Spec 003 settings (AC 9)

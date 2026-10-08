@@ -3,8 +3,8 @@
 //!
 //! Run them only with the documented test command (AGENTS.md §3).
 
+mod security;
 mod support;
-mod tokens;
 
 mod error_map;
 mod geography;
