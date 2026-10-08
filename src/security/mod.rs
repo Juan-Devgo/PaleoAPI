@@ -14,11 +14,11 @@ pub mod rate_limit;
 pub mod token;
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use crate::config::SecurityConfig;
-use clock::Clock;
-use events::{Event, EventSink};
+use clock::{Clock, SystemClock};
+use events::{Event, EventSink, StdoutSink};
 use permits::Permits;
 use token::Keys;
 
@@ -33,7 +33,10 @@ pub struct Capacities {
 
 impl Default for Capacities {
     fn default() -> Self {
-        todo!()
+        Self {
+            general_clients: 200_000,
+            login_keys: 100_000,
+        }
     }
 }
 
@@ -52,18 +55,32 @@ pub struct Security {
 impl Security {
     /// Production construction: default capacities, system clock, stdout sink.
     /// Computes the dummy hash, so it takes one Argon2 hashing time.
-    pub fn new(_config: SecurityConfig) -> Self {
-        todo!()
+    pub fn new(config: SecurityConfig) -> Self {
+        Self::with(
+            config,
+            Capacities::default(),
+            Arc::new(SystemClock),
+            Arc::new(StdoutSink),
+        )
     }
 
     /// Construction with injected capacities, clock, and sink (tests).
     pub fn with(
-        _config: SecurityConfig,
-        _capacities: Capacities,
-        _clock: Arc<dyn Clock>,
-        _sink: Arc<dyn EventSink>,
+        config: SecurityConfig,
+        capacities: Capacities,
+        clock: Arc<dyn Clock>,
+        sink: Arc<dyn EventSink>,
     ) -> Self {
-        todo!()
+        Self {
+            keys: Keys::new(config.jwt_secret.expose()),
+            requests: Permits::new(config.max_concurrent_requests),
+            hashes: Permits::new(config.max_concurrent_password_hashes),
+            dummy_hash: password::dummy_hash(),
+            config,
+            capacities,
+            clock,
+            sink,
+        }
     }
 
     pub fn config(&self) -> &SecurityConfig {
@@ -99,9 +116,8 @@ impl Security {
     }
 
     /// Writes one event line to the sink.
-    pub fn emit(&self, _event: &Event) {
-        let _ = &self.sink;
-        todo!()
+    pub fn emit(&self, event: &Event) {
+        self.sink.write_line(&event.to_line(SystemTime::now()));
     }
 }
 
