@@ -13,12 +13,20 @@ const MISSING_CHALLENGE: &str = r#"Bearer realm="paleo-api""#;
 const FORBIDDEN: &str =
     "This operation requires the admin role. Ask an operator to grant it to your account.";
 
-fn era(id: &str, name: &str) -> Value {
-    json!({ "id": id, "name": name, "start_mya": 251.902, "end_mya": 66 })
+/// An era body; eras may not overlap, so each id gets its own range.
+fn era(id: &str) -> Value {
+    let (start, end) = match id {
+        "era-a" => (500, 450),
+        "era-b" => (440, 400),
+        "era-c" => (390, 350),
+        "era-d" => (340, 300),
+        _ => (250, 66),
+    };
+    json!({ "id": id, "name": id, "start_mya": start, "end_mya": end })
 }
 
 async fn create_era(app: &TestApp, id: &str, token: Option<&str>) -> Resp {
-    send_as(app, Method::POST, "/api/v1/eras", era(id, id), token).await
+    send_as(app, Method::POST, "/api/v1/eras", era(id), token).await
 }
 
 async fn sql(app: &TestApp, statement: &str) {
@@ -162,6 +170,17 @@ async fn credential_changes_take_effect_on_the_next_write(
     );
 }
 
+/// Every header as sorted `(name, value)` pairs.
+fn header_list(resp: &Resp) -> Vec<(String, Vec<u8>)> {
+    let mut list: Vec<(String, Vec<u8>)> = resp
+        .headers
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.as_bytes().to_vec()))
+        .collect();
+    list.sort();
+    list
+}
+
 /// `GET` ignores `Authorization`: garbage, expired, or valid → identical to none (AC 8).
 #[sqlx::test]
 async fn reads_ignore_the_authorization_header(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
@@ -213,7 +232,7 @@ async fn reads_ignore_the_authorization_header(pool_opts: PgPoolOptions, opts: P
                 None => first = Some(resp),
                 Some(base) => {
                     assert_eq!(resp.status, base.status, "{uri} {value:?}");
-                    assert_eq!(resp.headers, base.headers, "{uri} {value:?}");
+                    assert_eq!(header_list(&resp), header_list(base), "{uri} {value:?}");
                     assert_eq!(resp.body, base.body, "{uri} {value:?}");
                 }
             }
