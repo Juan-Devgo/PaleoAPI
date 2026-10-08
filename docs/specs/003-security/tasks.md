@@ -4,7 +4,7 @@
 
 - [X] T001 Set dependencies, `default-run`, and dev profiles (plan §Project Structure `Cargo.toml`; research R6, R8) in `Cargo.toml`, `Cargo.lock`
 - [X] T002 [P] Add the RUSTSEC-2023-0071 ignore with a comment pointing at plan §Supply chain in `.cargo/audit.toml`
-- [ ] T003 [P] Add the `JWT_SECRET` placeholder and commented limit variables (plan §Configuration) in `.env.example`
+- [X] T003 [P] Add the `JWT_SECRET` placeholder and commented limit variables (plan §Configuration) in `.env.example`
 - [ ] T004 [P] Add the vulnerable lockfile fixture (plan §Project Structure) in `tests/fixtures/audit/Cargo.lock`
 - [X] T005 [P] Add pointer-only notes to §4.4, §4.11, §4.12, §9 (plan §Spec 002 overrides) in `docs/specs/002-crud/spec.md`
 - [X] T006 [P] Write repository guards scoped to tracked files outside `docs/` and `tests/repo_hygiene.rs` (plan §Cases `tests/repo_hygiene.rs`) in `tests/repo_hygiene.rs`
