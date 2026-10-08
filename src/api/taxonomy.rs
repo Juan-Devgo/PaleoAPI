@@ -7,7 +7,6 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
-use super::auth::AdminGate;
 use super::db_error::{Ctx, Op, map_write};
 use super::error::{ApiError, Resource};
 use super::http::{Many, One, cached_json, created, updated};
@@ -414,9 +413,8 @@ async fn create(
     req: HttpRequest,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let mut tx = begin_write(&pool).await?;
     if let (Some(parent), Some(pid)) = (rank.parent_rank(), &parent_id)
         && (!is_slug(pid) || !rank_exists(&mut tx, parent, pid).await?)
@@ -460,9 +458,8 @@ pub async fn create_domain(
     req: HttpRequest,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    create(&RANKS[0], None, req, payload, pool, gate).await
+    create(&RANKS[0], None, req, payload, pool).await
 }
 
 /// `POST /taxonomy/{parent_rank}/{parent_id}/{rank}`.
@@ -472,9 +469,8 @@ pub async fn create_child(
     path: web::Path<String>,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    create(rank, Some(path.into_inner()), req, payload, pool, gate).await
+    create(rank, Some(path.into_inner()), req, payload, pool).await
 }
 
 /// `PATCH /taxonomy/{rank}/{id}`: rename and reparent.
@@ -484,9 +480,8 @@ pub async fn update(
     path: web::Path<String>,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let id = path.into_inner();
     if !is_slug(&id) {
         return Err(ApiError::not_found(rank.resource, &id));
@@ -546,12 +541,10 @@ pub async fn delete(
     req: HttpRequest,
     path: web::Path<String>,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
     let id = path.into_inner();
     delete_resource(
         &req,
-        gate.get_ref(),
         &pool,
         rank.resource,
         &id,

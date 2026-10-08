@@ -5,7 +5,6 @@ use bigdecimal::BigDecimal;
 use serde::Serialize;
 use sqlx::{PgConnection, PgPool, Postgres, QueryBuilder};
 
-use super::auth::AdminGate;
 use super::db_error::{Ctx, Op, map_write};
 use super::decimal::Decimal;
 use super::error::{ApiError, FieldError, Resource};
@@ -571,9 +570,8 @@ pub async fn create_era(
     req: HttpRequest,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let mut tx = begin_write(&pool).await?;
     let mut o = Obj::new(body)?;
     let id = o.required("id", slug);
@@ -631,9 +629,8 @@ pub async fn update_era(
     path: web::Path<String>,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let id = path.into_inner();
     if !is_slug(&id) {
         return Err(ApiError::not_found(Resource::Era, &id));
@@ -703,12 +700,10 @@ pub async fn delete_era(
     req: HttpRequest,
     path: web::Path<String>,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
     let id = path.into_inner();
     delete_resource(
         &req,
-        gate.get_ref(),
         &pool,
         Resource::Era,
         &id,
@@ -736,9 +731,8 @@ pub async fn create_period(
     path: web::Path<String>,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let era_id = path.into_inner();
     if !is_slug(&era_id) {
         return Err(ApiError::not_found(Resource::Era, &era_id));
@@ -809,9 +803,8 @@ pub async fn update_period(
     path: web::Path<String>,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let id = path.into_inner();
     if !is_slug(&id) {
         return Err(ApiError::not_found(Resource::Period, &id));
@@ -906,12 +899,10 @@ pub async fn delete_period(
     req: HttpRequest,
     path: web::Path<String>,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
     let id = path.into_inner();
     delete_resource(
         &req,
-        gate.get_ref(),
         &pool,
         Resource::Period,
         &id,
