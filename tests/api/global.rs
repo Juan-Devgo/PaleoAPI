@@ -397,6 +397,12 @@ async fn options_on_write_routes_is_204(pool_opts: PgPoolOptions, opts: PgConnec
     }
 }
 
+/// `401` messages (003 FR-018, contracts/openapi.yaml `Unauthorized`).
+const MISSING_TOKEN: &str = "This operation needs an admin token. Log in at POST /api/v1/auth/login \
+                             and send the token as 'Authorization: Bearer <token>'.";
+const INVALID_TOKEN: &str =
+    "Your token is not valid. Log in again at POST /api/v1/auth/login to get a new one.";
+
 #[sqlx::test]
 async fn writes_need_admin_credentials(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
     let app = app(pool_opts, opts).await;
@@ -418,16 +424,20 @@ async fn writes_need_admin_credentials(pool_opts: PgPoolOptions, opts: PgConnect
         (Method::POST, "/api/v1/species", json!({})),
     ];
     for (method, uri, body) in cases {
-        for token in [None, Some("0f3c5d9e-random-token")] {
+        for (token, message) in [
+            (None, MISSING_TOKEN),
+            (Some("0f3c5d9e-random-token"), INVALID_TOKEN),
+        ] {
             let resp = send_as(&app, method.clone(), uri, body.clone(), token).await;
             assert_error(&resp, 401, "UNAUTHORIZED");
+            assert_eq!(resp.json()["error"]["message"], message, "{method} {uri}");
         }
         let resp = send_as(
             &app,
             method.clone(),
             uri,
             body.clone(),
-            Some(TEST_USER_TOKEN),
+            Some(&app.user_token()),
         )
         .await;
         assert_error(&resp, 403, "FORBIDDEN");
@@ -494,7 +504,7 @@ async fn body_problems_are_400_413_415(pool_opts: PgPoolOptions, opts: PgConnect
     let chunked = TestRequest::default()
         .method(Method::POST)
         .uri("/api/v1/eras")
-        .insert_header(("Authorization", format!("Bearer {TEST_ADMIN_TOKEN}")))
+        .insert_header(("Authorization", format!("Bearer {}", app.admin_token())))
         .insert_header(("Content-Type", "application/json"))
         .set_payload(big);
     let resp = app.call_chunked(chunked).await;
@@ -725,7 +735,7 @@ async fn check_order(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
     let resp = app
         .call(
             unauthenticated(b"{".to_vec(), "application/json")
-                .insert_header(("Authorization", format!("Bearer {TEST_USER_TOKEN}"))),
+                .insert_header(("Authorization", format!("Bearer {}", app.user_token()))),
         )
         .await;
     assert_error(&resp, 403, "FORBIDDEN");
@@ -830,7 +840,7 @@ async fn error_bodies_leak_nothing(pool_opts: PgPoolOptions, opts: PgConnectOpti
             Method::POST,
             "/api/v1/eras",
             json!({}),
-            Some(TEST_USER_TOKEN),
+            Some(&app.user_token()),
         )
         .await,
         send_raw(
