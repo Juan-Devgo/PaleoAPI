@@ -1,8 +1,8 @@
 # PaleoAPI Constitution
 
-**Version:** 1.1.0
+**Version:** 1.2.0
 **Ratified:** 2026-09-26
-**Last amended:** 2026-09-26
+**Last amended:** 2026-10-08
 
 This document defines the non-negotiable principles of PaleoAPI. Every specification, plan, task, and line of code MUST comply with it. When a spec or implementation conflicts with this constitution, the constitution wins.
 
@@ -63,4 +63,10 @@ Because of this, **ease of consumption is a first-class requirement**. Any decis
 
 - Prefer the simplest solution that satisfies the spec (YAGNI).
 - No new dependency, service, or abstraction layer without a documented reason in the plan.
-- Stateless API process: all state lives in PostgreSQL.
+- Stateless API process: all state lives in PostgreSQL. Exception: short-lived abuse-control state (rate-limit counters, login-attempt counters, concurrency permits) may live in process memory, provided losing it only resets the limits and the plan records the scaling consequence.
+
+---
+
+## 3. Amendments
+
+- **1.2.0 (2026-10-08), Principle VI:** allows short-lived abuse-control state in process memory. Rationale: Spec 003 FR-025 requires that rate-limited requests do no database work, which counters in PostgreSQL cannot satisfy; the state is disposable (losing it only resets the windows) and is not domain data.
