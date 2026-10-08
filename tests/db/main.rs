@@ -5,6 +5,7 @@
 
 mod support;
 
+mod accounts;
 mod collation;
 mod concurrency;
 mod geography;
