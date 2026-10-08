@@ -21,16 +21,30 @@ pub struct WriteCheckAccount {
     pub credentials_version: i32,
 }
 
+/// The login row of `username`, if it exists (plan §Login step 6).
 pub async fn find_for_login<'e>(
-    _e: impl PgExecutor<'e>,
-    _username: &str,
+    e: impl PgExecutor<'e>,
+    username: &str,
 ) -> sqlx::Result<Option<LoginAccount>> {
-    todo!()
+    sqlx::query_as!(
+        LoginAccount,
+        "SELECT password_hash, status, credentials_version FROM accounts WHERE username = $1",
+        username
+    )
+    .fetch_optional(e)
+    .await
 }
 
+/// The live role, status, and credential version of `username` (FR-015, research R7).
 pub async fn find_for_write_check<'e>(
-    _e: impl PgExecutor<'e>,
-    _username: &str,
+    e: impl PgExecutor<'e>,
+    username: &str,
 ) -> sqlx::Result<Option<WriteCheckAccount>> {
-    todo!()
+    sqlx::query_as!(
+        WriteCheckAccount,
+        "SELECT role, status, credentials_version FROM accounts WHERE username = $1",
+        username
+    )
+    .fetch_optional(e)
+    .await
 }
