@@ -1,7 +1,7 @@
 //! Non-waiting concurrency bounds (FR-030, FR-032, data-model §3.4).
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug)]
 pub struct Permits {
@@ -16,8 +16,11 @@ pub struct Permit {
 }
 
 impl Permits {
-    pub fn new(_max: usize) -> Arc<Self> {
-        todo!()
+    pub fn new(max: usize) -> Arc<Self> {
+        Arc::new(Self {
+            in_use: AtomicUsize::new(0),
+            max,
+        })
     }
 
     pub fn max(&self) -> usize {
@@ -25,20 +28,25 @@ impl Permits {
     }
 
     pub fn in_use(&self) -> usize {
-        todo!()
+        self.in_use.load(Ordering::SeqCst)
     }
 
     /// A permit, or `None` when all are in use. Never waits.
     pub fn try_acquire(self: &Arc<Self>) -> Option<Permit> {
-        let _ = &self.in_use;
-        todo!()
+        self.in_use
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < self.max).then_some(n + 1)
+            })
+            .ok()
+            .map(|_| Permit {
+                permits: Arc::clone(self),
+            })
     }
 }
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let _ = &self.permits;
-        todo!()
+        self.permits.in_use.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
