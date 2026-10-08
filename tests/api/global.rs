@@ -13,8 +13,15 @@ fn assert_cors(resp: &Resp) {
     let expose = resp
         .header("access-control-expose-headers")
         .unwrap_or_default();
-    assert!(
-        expose.to_ascii_lowercase().contains("etag"),
+    let mut exposed: Vec<String> = expose
+        .split(',')
+        .map(|h| h.trim().to_ascii_lowercase())
+        .collect();
+    exposed.sort();
+    // 003 research R4: scripts read the ETag, Retry-After, and rate-limit headers.
+    assert_eq!(
+        exposed,
+        ["etag", "ratelimit", "ratelimit-policy", "retry-after"],
         "Access-Control-Expose-Headers: {expose:?}"
     );
 }

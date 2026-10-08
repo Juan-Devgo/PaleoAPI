@@ -213,7 +213,10 @@ mod tests {
             let res = test::call_service(&app, req).await;
             let get = |name| res.headers().get(name).and_then(|v| v.to_str().ok());
             assert_eq!(get(header::ACCESS_CONTROL_ALLOW_ORIGIN), Some("*"));
-            assert_eq!(get(header::ACCESS_CONTROL_EXPOSE_HEADERS), Some("ETag"));
+            assert_eq!(
+                get(header::ACCESS_CONTROL_EXPOSE_HEADERS),
+                Some("ETag, Retry-After, RateLimit, RateLimit-Policy")
+            );
             assert!(get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
             let expected = if is_safe(&method) {
                 "public, max-age=300"

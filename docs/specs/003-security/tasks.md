@@ -59,7 +59,7 @@
 
 - [X] T046 [P] [US3] Write GCRA unit tests (data-model §3.2) and the poisoned shard → `500` test (AC 20) in `src/security/rate_limit.rs`
 - [X] T047 [P] [US3] Write general-limit tests for AC 11, 12 (including the ignored `sustained_default_rate`, quickstart §7.1), 15, 26, 27, 28 (plan §Cases `security/rate_limit.rs`) in `tests/api/security/rate_limit.rs`
-- [ ] T048 [P] [US3] Update `assert_cors` exposed headers (research R4) in `tests/api/global.rs`
+- [X] T048 [P] [US3] Update `assert_cors` exposed headers (research R4) in `tests/api/global.rs`
 - [ ] T049 [US3] Implement the sharded GCRA table (data-model §3.2) in `src/security/rate_limit.rs`
 - [ ] T050 [US3] Add `RATE_LIMITED` with `Retry-After` (spec §Error Codes) in `src/api/error.rs`
 - [ ] T051 [US3] Implement the `rate_limit` layer with `RateLimit` / `RateLimit-Policy`, poisoned shard → `500` (research R14), and add the headers to the exposed headers in `security_headers` (research R2, R4, R5) in `src/security/middleware.rs`
