@@ -53,7 +53,7 @@
 - [X] T042 [US1] Drop the `gate` parameters from write handlers in `src/api/geologic_time.rs`, `src/api/taxonomy.rs`, `src/api/geography.rs`, `src/api/species/mod.rs`
 - [X] T043 [US1] Change to `app(pool, Arc<Security>)`, wire `security_headers` and `require_admin`, drop the gate from route closures and write helpers, register `/auth/login` in routes and `ROUTES` in `src/api/mod.rs`
 - [X] T044 [US1] Pass `Security` to `api::app` and remove `DenyAll` in `src/main.rs`
-- [ ] T045 [US1] Add `/auth/login`, `adminBearer`, `Unauthorized`, `Forbidden`, `LoginOk`, `InvalidCredentials` (contracts/openapi.yaml) in `docs/openapi.yaml`
+- [X] T045 [US1] Add `/auth/login`, `adminBearer`, `Unauthorized`, `Forbidden`, `LoginOk`, `InvalidCredentials` (contracts/openapi.yaml) in `docs/openapi.yaml`
 
 ## Phase 4: US3 — Students fetch within generous limits (P1)
 

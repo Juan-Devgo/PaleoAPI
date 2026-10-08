@@ -28,12 +28,23 @@ info:
 servers:
   - url: /api/v1
 tags:
+  - { name: auth, description: Admin login. }
   - { name: geologic-time, description: Eras and periods. }
   - { name: taxonomy, description: 'Domain → kingdom → phylum → class → order → family → genus.' }
   - { name: geography, description: Continents and countries. }
   - { name: species }
 
 paths:
+  # ---------------------------------------------------------------- auth
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      security: []
+      description: 'Exchanges an admin username and password for a 60-minute token. Limited to 10 attempts per client and 20 failures per username per 15 minutes (operator-configurable).'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/LoginOk' }, '400': { $ref: '#/components/responses/BadRequest' }, '401': { $ref: '#/components/responses/InvalidCredentials' }, '405': { $ref: '#/components/responses/MethodNotAllowed' }, '413': { $ref: '#/components/responses/PayloadTooLarge' }, '415': { $ref: '#/components/responses/UnsupportedMediaType' }, '422': { $ref: '#/components/responses/ValidationFailed' }, '500': { $ref: '#/components/responses/InternalError' } }
+
   # ---------------------------------------------------------------- geologic time
   /eras:
     get:
@@ -507,7 +518,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Admin token, issued by the security release. Until then no token is accepted and every write returns 401.
+      description: 'Token from POST /auth/login, valid 60 minutes, sent only in the Authorization header (query, cookie, and body are ignored). The account must be active; writes also need the admin role.'
 
   parameters:
     page: { name: page, in: query, description: '1-based page number. Past the last page returns empty `data`.', schema: { type: integer, minimum: 1, maximum: 1000000, default: 1 } }
@@ -543,6 +554,8 @@ components:
     CacheControl: { schema: { type: string, const: 'public, max-age=300' } }
     Location: { description: Canonical path of the created resource., schema: { type: string }, example: /api/v1/species/tyrannosaurus-rex }
     Allow: { description: Methods supported on the path., schema: { type: string }, example: 'GET, PATCH, DELETE' }
+    WWWAuthenticate: { schema: { type: string }, examples: { missing: { value: 'Bearer realm="paleo-api"' }, rejected: { value: 'Bearer realm="paleo-api", error="invalid_token"' } } }
+    CacheControlNoStore: { schema: { type: string, const: no-store } }
 
   responses:
     NotModified:
@@ -558,11 +571,26 @@ components:
             query: { value: { error: { code: INVALID_QUERY_PARAMETER, message: "sort 'size' is not supported. Use one of: name, -name, scientific_name, -scientific_name, discovery_year, -discovery_year." } } }
             json: { value: { error: { code: INVALID_JSON, message: 'The request body is not valid JSON (line 1, column 14). Check quotes, commas, and brackets.' } } }
     Unauthorized:
-      description: Missing or invalid admin credentials.
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: UNAUTHORIZED, message: 'This operation requires admin credentials. Send a valid admin token in the Authorization header.' } } } }
+      description: Missing, expired, or invalid token.
+      headers: { WWW-Authenticate: { $ref: '#/components/headers/WWWAuthenticate' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            missing: { value: { error: { code: UNAUTHORIZED, message: "This operation needs an admin token. Log in at POST /api/v1/auth/login and send the token as 'Authorization: Bearer <token>'." } } }
+            expired: { value: { error: { code: UNAUTHORIZED, message: 'Your token has expired. Log in again at POST /api/v1/auth/login to get a new one.' } } }
+            invalid: { value: { error: { code: UNAUTHORIZED, message: 'Your token is not valid. Log in again at POST /api/v1/auth/login to get a new one.' } } }
     Forbidden:
-      description: Valid credentials without the admin role.
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: FORBIDDEN, message: 'This operation requires the admin role.' } } } }
+      description: Valid token of an account without the admin role.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: FORBIDDEN, message: 'This operation requires the admin role. Ask an operator to grant it to your account.' } } } }
+    LoginOk:
+      description: Token issued.
+      headers: { Cache-Control: { $ref: '#/components/headers/CacheControlNoStore' } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/LoginEnvelope' } } }
+    InvalidCredentials:
+      description: Unknown username, wrong password, or disabled account; the three are indistinguishable.
+      headers: { WWW-Authenticate: { $ref: '#/components/headers/WWWAuthenticate' }, Cache-Control: { $ref: '#/components/headers/CacheControlNoStore' } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' }, example: { error: { code: INVALID_CREDENTIALS, message: 'Wrong username or password.' } } } }
     NotFound:
       description: '`<RESOURCE>_NOT_FOUND` for an unknown or malformed id in the path (including the parent of a nested path), `ROUTE_NOT_FOUND` for an unknown path.'
       content:
@@ -637,6 +665,21 @@ components:
       required: [error]
       properties:
         error: { type: object, required: [code, message], properties: { code: { type: string }, message: { type: string } } }
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1 }
+        password: { type: string, minLength: 1, maxLength: 128, format: password }
+    LoginResponse:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer, const: 3600 }
+    LoginEnvelope: { type: object, required: [data], properties: { data: { $ref: '#/components/schemas/LoginResponse' } } }
     FieldError: { type: object, required: [field, message], properties: { field: { type: string, description: 'Body field (`size.length_m.min` for nested); `""` for the whole body.' }, message: { type: string } } }
     ValidationError:
       type: object
