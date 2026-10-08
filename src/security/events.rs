@@ -1,8 +1,9 @@
 //! Security event log: one JSON object per line (FR-039, FR-040, research R17,
 //! contracts/security-events.md).
 
-use std::sync::Mutex;
-use std::time::SystemTime;
+use std::io::Write;
+use std::sync::{Mutex, PoisonError};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -15,8 +16,10 @@ pub trait EventSink: Send + Sync {
 pub struct StdoutSink;
 
 impl EventSink for StdoutSink {
-    fn write_line(&self, _line: &str) {
-        todo!()
+    /// One locked write per line, so lines from different workers never interleave.
+    /// A closed stdout loses the line rather than failing the request.
+    fn write_line(&self, line: &str) {
+        let _ = writeln!(std::io::stdout().lock(), "{line}");
     }
 }
 
@@ -28,14 +31,19 @@ pub struct CaptureSink {
 
 impl CaptureSink {
     pub fn lines(&self) -> Vec<String> {
-        let _ = &self.lines;
-        todo!()
+        self.lines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
 impl EventSink for CaptureSink {
-    fn write_line(&self, _line: &str) {
-        todo!()
+    fn write_line(&self, line: &str) {
+        self.lines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(line.to_string());
     }
 }
 
@@ -79,19 +87,67 @@ pub struct Event {
 
 impl Event {
     /// An event with only its kind set.
-    pub fn new(_kind: EventKind) -> Self {
-        todo!()
+    pub fn new(kind: EventKind) -> Self {
+        Self {
+            event: kind,
+            client: None,
+            account: None,
+            method: None,
+            route: None,
+            path: None,
+            resource: None,
+            status: None,
+            reason: None,
+            count: None,
+        }
     }
 
-    /// The JSON line with `ts` first; never contains a raw line break.
-    pub fn to_line(&self, _at: SystemTime) -> String {
-        todo!()
+    /// The JSON line with `ts` first. JSON string escaping turns every control
+    /// character into an escape, so the line never contains a raw line break (FR-040).
+    pub fn to_line(&self, at: SystemTime) -> String {
+        #[derive(Serialize)]
+        struct Line<'a> {
+            ts: String,
+            #[serde(flatten)]
+            event: &'a Event,
+        }
+        serde_json::to_string(&Line {
+            ts: rfc3339_millis(at),
+            event: self,
+        })
+        .expect("an event of strings and integers always serializes")
     }
 }
 
-/// RFC 3339 UTC with milliseconds: `2026-10-07T14:03:22.418Z`.
-pub fn rfc3339_millis(_at: SystemTime) -> String {
-    todo!()
+/// RFC 3339 UTC with milliseconds: `2026-10-07T14:03:22.418Z`. Times before the
+/// epoch print as the epoch.
+pub fn rfc3339_millis(at: SystemTime) -> String {
+    let since = at.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let secs = since.as_secs();
+    let (year, month, day) = civil_from_days(secs / 86_400);
+    let rem = secs % 86_400;
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60,
+        since.subsec_millis()
+    )
+}
+
+/// Proleptic Gregorian date of a day count since 1970-01-01 (H. Hinnant's
+/// `civil_from_days`, restricted to non-negative counts).
+fn civil_from_days(days: u64) -> (u64, u64, u64) {
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + u64::from(month <= 2);
+    (year, month, day)
 }
 
 #[cfg(test)]

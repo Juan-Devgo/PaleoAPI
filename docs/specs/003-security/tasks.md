@@ -28,7 +28,7 @@
 - [X] T021 Implement `ClientKey`, `TrustedProxies`, `resolve` (research R5; data-model §3.1) in `src/security/client_ip.rs`
 - [X] T022 Implement hash, blocking-pool verify, dummy hash, password policy (research R8, R9) in `src/security/password.rs`
 - [X] T023 Implement `Claims`, `issue`, `verify` → `Expired | Invalid` (research R6; data-model §2) in `src/security/token.rs`
-- [ ] T024 Implement `EventSink`, `Event`, stdout and capture sinks (research R17; contracts/security-events.md) in `src/security/events.rs`
+- [X] T024 Implement `EventSink`, `Event`, stdout and capture sinks (research R17; contracts/security-events.md) in `src/security/events.rs`
 - [ ] T025 [P] Implement `Clock`, `SystemClock`, `ManualClock` (data-model §3.5) in `src/security/clock.rs`
 - [ ] T026 Implement `Permits` (data-model §3.4) in `src/security/permits.rs`
 - [ ] T027 Implement the login and write-check lookups (data-model §1.1), run `sqlx migrate run` on the development database, then `cargo sqlx prepare -- --all-targets`, in `src/security/accounts.rs`, `.sqlx/`
