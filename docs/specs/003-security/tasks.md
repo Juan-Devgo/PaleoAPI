@@ -13,7 +13,7 @@
 
 - [X] T007 [P] Write account table constraint and trigger tests (plan §Cases `tests/db/accounts.rs`) in `tests/db/accounts.rs`, `tests/db/main.rs`
 - [X] T008 [P] Update catalog and migration tests for `accounts` (plan §Existing tests) in `tests/db/support.rs`, `tests/db/schema_catalog.rs`, `tests/db/migrations.rs`
-- [ ] T009 [P] Exclude `accounts` from the error-map completeness test (plan §Existing tests) in `tests/api/error_map.rs`
+- [X] T009 [P] Exclude `accounts` from the error-map completeness test (plan §Existing tests) in `tests/api/error_map.rs`
 - [ ] T010 Create the `accounts` migration with its reversible down (data-model §1) in `migrations/<ts>_accounts.up.sql`, `migrations/<ts>_accounts.down.sql`
 - [ ] T011 Create the `security` module tree with `todo!()` stubs (plan §Project Structure) in `src/lib.rs`, `src/security/`
 - [ ] T012 [P] Write configuration unit tests (plan §Cases `src/config.rs`) in `src/config.rs`
