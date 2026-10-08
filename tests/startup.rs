@@ -6,6 +6,7 @@ use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use paleo_api::security::token::{Claims, Keys, issue};
 use sqlx::{AssertSqlSafe, PgPool};
 
 const LEAKS: [&str; 2] = ["leaky_user", "leaky-secret-123"];
@@ -283,6 +284,28 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
     // (h) serve: the binary serves `api::app`, not the old stub routes (AC 6.1.15).
     let served = listening
         .then(|| raw_http("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"));
+    // (h) deny: the binary requires an admin token; none and a forged one are 401
+    // (Spec 003 FR-015, FR-016).
+    let forged = issue(
+        &Keys::new(b"forged-signing-secret-0123456789abcdef"),
+        &Claims::now("admin", 1),
+    )
+    .unwrap();
+    let denied: Vec<String> = [None, Some(forged)]
+        .into_iter()
+        .filter(|_| listening)
+        .map(|token| {
+            let body = r#"{"id":"mesozoic","name":"Mesozoic","start_mya":251.902,"end_mya":66}"#;
+            let auth = token
+                .map(|t| format!("Authorization: Bearer {t}\r\n"))
+                .unwrap_or_default();
+            raw_http(&format!(
+                "POST /api/v1/eras HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
+                 {auth}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            ))
+        })
+        .collect();
     let still_running = child.try_wait().unwrap().is_none();
     child.kill().ok();
     child.wait().unwrap();
@@ -306,6 +329,14 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
         served.contains("\"ROUTE_NOT_FOUND\""),
         "GET / must answer the ROUTE_NOT_FOUND envelope: {served}"
     );
+    assert_eq!(denied.len(), 2);
+    for denied in denied {
+        assert!(
+            denied.starts_with("HTTP/1.1 401"),
+            "writes must be denied: {denied}"
+        );
+        assert!(denied.contains("\"UNAUTHORIZED\""), "{denied}");
+    }
 }
 
 // ---------------------------------------------------------------- Spec 003 settings (AC 9)
