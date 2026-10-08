@@ -49,7 +49,7 @@
 - [X] T038 [US1] Add `INVALID_CREDENTIALS`, `SERVICE_UNAVAILABLE` with `Retry-After`, the `401`/`403` messages, and `WWW-Authenticate` on `ApiError` (spec §Error Codes; research R14, R19; contracts/openapi.yaml) in `src/api/error.rs`
 - [X] T039 [US1] Implement `require_admin` (research R16, R19; plan §Request pipeline 4.2) in `src/security/middleware.rs`
 - [X] T040 [US1] Implement `security_headers` replacing `DefaultHeaders` with the 002 CORS headers and `no-store` on non-safe methods (research R15) in `src/security/middleware.rs`
-- [ ] T041 [US1] Remove `AdminGate`, `DenyAll`, and their unit tests; add `admin(&req)` and the login handler (plan §Login steps 2, 3, 6–8) in `src/api/auth.rs`
+- [X] T041 [US1] Remove `AdminGate`, `DenyAll`, and their unit tests; add `admin(&req)` and the login handler (plan §Login steps 2, 3, 6–8) in `src/api/auth.rs`
 - [ ] T042 [US1] Drop the `gate` parameters from write handlers in `src/api/geologic_time.rs`, `src/api/taxonomy.rs`, `src/api/geography.rs`, `src/api/species/mod.rs`
 - [ ] T043 [US1] Change to `app(pool, Arc<Security>)`, wire `security_headers` and `require_admin`, drop the gate from route closures and write helpers, register `/auth/login` in routes and `ROUTES` in `src/api/mod.rs`
 - [ ] T044 [US1] Pass `Security` to `api::app` and remove `DenyAll` in `src/main.rs`
