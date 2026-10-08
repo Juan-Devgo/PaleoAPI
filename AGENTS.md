@@ -68,7 +68,7 @@ Never run plain `cargo test` with the development `DATABASE_URL`: the test harne
 
 - All endpoints live under `/api/v1`. Resources use plural nouns; nesting expresses hierarchy (`/api/v1/eras/{era_id}/periods`).
 - Breaking changes require a new version (`/api/v2`).
-- `GET` is public. `POST`, `PUT`/`PATCH`, `DELETE` require an admin JWT (`401` if missing/invalid, `403` if not admin).
+- `GET` is public. `POST`, `PUT`/`PATCH`, `DELETE` require an admin JWT (`401` if missing/invalid, `403` if not admin). Exception: `POST /api/v1/auth/login` is public (Spec 003).
 - Pagination: `?page=<n>&limit=<n>`, defaults `page=1`, `limit=20`, max `limit=100`. Filters and sorting via query params.
 - Response shapes:
 
@@ -85,7 +85,7 @@ Never run plain `cargo test` with the development `DATABASE_URL`: the test harne
 ```
 
 - Use correct status codes (`400`, `401`, `403`, `404`, `409`, `422`, `429`, `500`). Never leak stack traces, SQL, or internal details.
-- All SQL uses bound parameters. Never log or return passwords, hashes, or tokens.
+- All SQL uses bound parameters. Never log or return passwords, hashes, or tokens; the only response that carries a token is a successful login.
 
 ---
 
