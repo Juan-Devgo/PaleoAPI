@@ -15,7 +15,7 @@
 - [X] T008 [P] Update catalog and migration tests for `accounts` (plan §Existing tests) in `tests/db/support.rs`, `tests/db/schema_catalog.rs`, `tests/db/migrations.rs`
 - [X] T009 [P] Exclude `accounts` from the error-map completeness test (plan §Existing tests) in `tests/api/error_map.rs`
 - [X] T010 Create the `accounts` migration with its reversible down (data-model §1) in `migrations/<ts>_accounts.up.sql`, `migrations/<ts>_accounts.down.sql`
-- [ ] T011 Create the `security` module tree with `todo!()` stubs (plan §Project Structure) in `src/lib.rs`, `src/security/`
+- [X] T011 Create the `security` module tree with `todo!()` stubs (plan §Project Structure) in `src/lib.rs`, `src/security/`
 - [ ] T012 [P] Write configuration unit tests (plan §Cases `src/config.rs`) in `src/config.rs`
 - [ ] T013 [P] Write client resolution unit tests (plan §Cases `src/security/*`; research R5) in `src/security/client_ip.rs`
 - [ ] T014 [P] Write password policy and hashing unit tests (research R8, R9) in `src/security/password.rs`

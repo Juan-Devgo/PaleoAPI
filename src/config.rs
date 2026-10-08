@@ -1,13 +1,50 @@
-//! Configuration read from the environment (FR-002).
+//! Configuration read from the environment (FR-002; Spec 003 plan §Configuration).
 
+use std::fmt;
 use std::str::FromStr;
+use std::time::Duration;
 
 use sqlx::postgres::PgConnectOptions;
 
 use crate::db::StartupError;
+use crate::security::client_ip::TrustedProxies;
 
 /// The only configuration variable the API reads.
 pub const DATABASE_URL: &str = "DATABASE_URL";
+
+/// The token signing secret. `Debug` never prints it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct JwtSecret(Vec<u8>);
+
+impl JwtSecret {
+    pub fn new(secret: impl Into<Vec<u8>>) -> Self {
+        Self(secret.into())
+    }
+
+    pub fn expose(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for JwtSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("JwtSecret(..)")
+    }
+}
+
+/// Security settings (Spec 003 plan §Configuration).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecurityConfig {
+    pub jwt_secret: JwtSecret,
+    pub rate_limit_per_minute: u32,
+    pub rate_limit_burst: u32,
+    pub login_limit_per_client: u32,
+    pub login_limit_per_username: u32,
+    pub login_limit_window: Duration,
+    pub trusted_proxies: TrustedProxies,
+    pub max_concurrent_requests: usize,
+    pub max_concurrent_password_hashes: usize,
+}
 
 /// Builds the connection options from `DATABASE_URL`, read through `get`
 /// (normally `std::env::var`). Errors never echo the URL.
