@@ -118,7 +118,7 @@
 ## Phase 10: Polish
 
 - [x] T088 Check query metadata with `cargo sqlx prepare --check -- --all-targets` and commit `.sqlx/`
-- [ ] T089 Run `DATABASE_URL="$TEST_DATABASE_URL" cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` over `src/`, `tests/`
+- [x] T089 Run `DATABASE_URL="$TEST_DATABASE_URL" cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` over `src/`, `tests/`
 - [ ] T090 Run `cargo audit` and the AC 23 fixture check (quickstart §7.2) against `Cargo.lock`, `tests/fixtures/audit/Cargo.lock`
 - [ ] T091 Run the release latency gate and the AC 12 sustained run (quickstart §7.1) in `tests/api/performance.rs`, `tests/api/security/rate_limit.rs`
 - [ ] T092 Validate quickstart §2–§8 end to end per `docs/specs/003-security/quickstart.md`
