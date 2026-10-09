@@ -68,7 +68,7 @@
 
 ## Phase 5: US4 — One client cannot exhaust the API (P1)
 
-- [ ] T054 [P] [US4] Write proxy and /64 tests (plan §Cases `security/client_ip.rs`) in `tests/api/security/client_ip.rs`
+- [x] T054 [P] [US4] Write proxy and /64 tests (plan §Cases `security/client_ip.rs`) in `tests/api/security/client_ip.rs`
 - [ ] T055 [P] [US4] Write TCP limit tests for AC 16, 17, 30 and the FR-029 idle keep-alive close (plan §Cases `security/limits.rs`) in `tests/api/security/limits.rs`
 - [ ] T056 [P] [US4] Write fail-closed tests (plan §Cases `security/fail_closed.rs`) in `tests/api/security/fail_closed.rs`
 - [ ] T057 [US4] Add `REQUEST_TIMEOUT`, `URI_TOO_LONG`, `REQUEST_HEADERS_TOO_LARGE` (spec §Error Codes) in `src/api/error.rs`
