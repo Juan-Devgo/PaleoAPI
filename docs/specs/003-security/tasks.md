@@ -106,7 +106,7 @@
 
 ## Phase 9: US7 — Safe defaults and documented routes (P2)
 
-- [ ] T080 [P] [US7] Write header and preflight tests (plan §Cases `security/headers.rs`) in `tests/api/security/headers.rs`
+- [x] T080 [P] [US7] Write header and preflight tests (plan §Cases `security/headers.rs`) in `tests/api/security/headers.rs`
 - [ ] T081 [P] [US7] Write route-inventory tests (plan §Cases `security/inventory.rs`) in `tests/api/security/inventory.rs`
 - [ ] T082 [P] [US7] Write the `image_url` no-fetch test (plan §Cases `security/ssrf.rs`) in `tests/api/security/ssrf.rs`
 - [ ] T083 [P] [US7] Write per-operation OpenAPI rules (plan §Existing tests `openapi.rs`) in `tests/api/openapi.rs`
