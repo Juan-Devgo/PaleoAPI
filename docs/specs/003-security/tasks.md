@@ -89,7 +89,7 @@
 
 ## Phase 7: US5 — Login throttling without user enumeration (P2)
 
-- [ ] T069 [P] [US5] Write sliding-log, reservation, and per-client `rate_limited` dedupe unit tests (data-model §3.3) in `src/security/login_limit.rs`
+- [x] T069 [P] [US5] Write sliding-log, reservation, and per-client `rate_limited` dedupe unit tests (data-model §3.3) in `src/security/login_limit.rs`
 - [ ] T070 [P] [US5] Write AC 6 identical-response tests with a fresh peer per case and timing tests (plan §Cases `security/login.rs`) in `tests/api/security/login.rs`
 - [ ] T071 [P] [US5] Write login-limit tests for AC 14 (plan §Cases `security/rate_limit.rs`) in `tests/api/security/rate_limit.rs`
 - [ ] T072 [P] [US5] Write the hashing-bound test for AC 29 (plan §Cases `security/limits.rs`) in `tests/api/security/limits.rs`
