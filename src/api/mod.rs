@@ -37,13 +37,14 @@ pub mod species;
 pub mod taxonomy;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use actix_web::body::MessageBody;
 use actix_web::dev::{Service, ServiceFactory, ServiceRequest, ServiceResponse};
 use actix_web::http::header::{self, HeaderValue};
 use actix_web::http::{Method, StatusCode};
 use actix_web::middleware::{ErrorHandlerResponse, ErrorHandlers, from_fn};
-use actix_web::{App, HttpRequest, HttpResponse, ResponseError, web};
+use actix_web::{App, HttpRequest, HttpResponse, HttpServer, ResponseError, web};
 use sqlx::PgPool;
 
 use self::error::{ApiError, no_store_on_get_errors};
@@ -312,6 +313,28 @@ pub fn app(
         .wrap(from_fn(capacity))
         .wrap(from_fn(request_limits))
         .wrap(from_fn(security_headers))
+}
+
+/// Time the client has to send complete request headers (FR-029, research R11).
+pub const CLIENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long an idle kept-alive connection stays open (FR-029, research R11).
+pub const KEEP_ALIVE: Duration = Duration::from_secs(15);
+/// Time a closing connection has to finish (research R11).
+pub const CLIENT_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// The server of [`app`] on `listener` with the connection timeouts of FR-029. `main`
+/// and the TCP tests both start it, so they run the same transport settings.
+pub fn serve(
+    listener: std::net::TcpListener,
+    pool: PgPool,
+    security: Arc<Security>,
+) -> std::io::Result<actix_web::dev::Server> {
+    Ok(HttpServer::new(move || app(pool.clone(), security.clone()))
+        .client_request_timeout(CLIENT_REQUEST_TIMEOUT)
+        .keep_alive(KEEP_ALIVE)
+        .client_disconnect_timeout(CLIENT_DISCONNECT_TIMEOUT)
+        .listen(listener)?
+        .run())
 }
 
 /// Runs a list: the count first, then the page unless it lies past the end

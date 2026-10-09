@@ -1,12 +1,12 @@
+use std::net::TcpListener;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use actix_web::HttpServer;
 use paleo_api::api;
 use paleo_api::config::{SecurityConfig, database_options_from_env, security_config_from_env};
 use paleo_api::db::{
-    MIGRATOR, STARTUP_WAIT, StartupError, api_connect_options, collation_version_warning,
-    connect_with_retry, verify_migrations,
+    DB_TIMEOUT, MIGRATOR, STARTUP_WAIT, StartupError, api_connect_options,
+    collation_version_warning, connect_with_retry, verify_migrations,
 };
 use paleo_api::security::Security;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -42,12 +42,13 @@ async fn main() -> ExitCode {
     let security = Arc::new(Security::new(config));
     let pool: PgPool = PgPoolOptions::new()
         .max_connections(10)
+        .acquire_timeout(DB_TIMEOUT)
         .connect_lazy_with(api_connect_options(opts));
-    let server =
-        HttpServer::new(move || api::app(pool.clone(), security.clone())).bind(("127.0.0.1", 8000));
+    let server = TcpListener::bind(("127.0.0.1", 8000))
+        .and_then(|listener| api::serve(listener, pool, security));
 
     let result = match server {
-        Ok(server) => server.run().await,
+        Ok(server) => server.await,
         Err(err) => Err(err),
     };
     match result {
