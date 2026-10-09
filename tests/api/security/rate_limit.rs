@@ -370,3 +370,99 @@ async fn every_response_carries_the_rate_limit_headers(
     assert_rate_headers(&limited, r#""general";r=0;t=5"#, policy);
     assert_eq!(limited.header("access-control-allow-origin"), Some("*"));
 }
+
+/// Settings with the default login limits (10 per client, 20 per username, 15 minutes)
+/// and a manual clock.
+fn login_limited() -> SecuritySettings {
+    SecuritySettings {
+        config: security_env(&[
+            ("LOGIN_LIMIT_PER_CLIENT", "10"),
+            ("LOGIN_LIMIT_PER_USERNAME", "20"),
+            ("LOGIN_LIMIT_WINDOW_SECONDS", "900"),
+        ]),
+        manual_clock: true,
+        ..SecuritySettings::default()
+    }
+}
+
+#[track_caller]
+fn assert_login_limited(resp: &Resp, what: &str, limit: u32, secs: u64) {
+    assert_error(resp, 429, "RATE_LIMITED");
+    assert_eq!(resp.header("retry-after"), Some(secs.to_string().as_str()));
+    assert_eq!(resp.header("cache-control"), Some("no-store"));
+    assert_eq!(
+        resp.json()["error"]["message"],
+        format!("{what}: the limit is {limit} per 15 minutes. Retry in {secs} seconds.")
+    );
+}
+
+/// AC 14: the 11th login request of a client within 15 minutes is `429`, even with the
+/// correct credentials; it is free again once the oldest request leaves the window.
+#[sqlx::test]
+async fn the_eleventh_login_per_client_is_429(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
+    let app = app_with(pool_opts, opts, login_limited()).await;
+    for i in 0..10 {
+        let resp = login(&app, ADMIN, TEST_PASSWORD, peer(1)).await;
+        assert_eq!(resp.status.as_u16(), 200, "login {i}: {}", resp.text());
+    }
+    let what = "Too many login attempts from your address";
+    let resp = login(&app, ADMIN, TEST_PASSWORD, peer(1)).await;
+    assert_login_limited(&resp, what, 10, 900);
+    assert!(!resp.text().contains("access_token"));
+
+    app.clock().advance(Duration::from_secs(300));
+    let resp = login(&app, ADMIN, TEST_PASSWORD, peer(1)).await;
+    assert_login_limited(&resp, what, 10, 600);
+
+    // Another client is not affected.
+    let other = login(&app, ADMIN, TEST_PASSWORD, peer(2)).await;
+    assert_eq!(other.status.as_u16(), 200, "{}", other.text());
+
+    app.clock().advance(Duration::from_secs(600));
+    let resp = login(&app, ADMIN, TEST_PASSWORD, peer(1)).await;
+    assert_eq!(resp.status.as_u16(), 200, "{}", resp.text());
+}
+
+/// AC 14: the 20th failed login for a username, across clients, locks that username for
+/// the window; the correct password is refused too. An unknown username is counted and
+/// answered identically.
+#[sqlx::test]
+async fn twenty_failures_lock_a_username(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
+    let app = app_with(pool_opts, opts, login_limited()).await;
+    let what = "Too many failed logins for this username";
+    let mut locked = Vec::new();
+    for username in [ADMIN, "nobody"] {
+        for n in 0..20 {
+            let resp = login(&app, username, "paleo-test-password-2025", peer(100 + n)).await;
+            assert_error(&resp, 401, "INVALID_CREDENTIALS");
+        }
+        let resp = login(&app, username, TEST_PASSWORD, peer(200)).await;
+        assert_login_limited(&resp, what, 20, 900);
+        locked.push((resp.status, header_list(&resp), resp.body.to_vec()));
+    }
+    assert_eq!(locked[0], locked[1], "existing vs unknown username");
+
+    // Other usernames are not locked, and a lockout is not a failure by the client.
+    let resp = login(&app, USER, TEST_PASSWORD, peer(200)).await;
+    assert_eq!(resp.status.as_u16(), 200, "{}", resp.text());
+
+    app.clock().advance(Duration::from_secs(300));
+    let resp = login(&app, ADMIN, TEST_PASSWORD, peer(201)).await;
+    assert_login_limited(&resp, what, 20, 600);
+
+    app.clock().advance(Duration::from_secs(600));
+    let resp = login(&app, ADMIN, TEST_PASSWORD, peer(202)).await;
+    assert_eq!(resp.status.as_u16(), 200, "{}", resp.text());
+}
+
+/// A username that is not a slug is counted like any other (FR-022).
+#[sqlx::test]
+async fn invalid_usernames_are_counted_too(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
+    let app = app_with(pool_opts, opts, login_limited()).await;
+    for n in 0..20 {
+        let resp = login(&app, "Not A Slug", TEST_PASSWORD, peer(100 + n)).await;
+        assert_error(&resp, 401, "INVALID_CREDENTIALS");
+    }
+    let resp = login(&app, "Not A Slug", TEST_PASSWORD, peer(200)).await;
+    assert_error(&resp, 429, "RATE_LIMITED");
+}
