@@ -198,8 +198,9 @@ async fn authorize(req: &ServiceRequest) -> Result<AdminIdentity, Box<Denied>> {
     })
 }
 
-/// Plan §Request pipeline 0, outermost: on every response the Spec 002 CORS headers, and
-/// `Cache-Control: no-store` on every response to a method other than `GET`, `HEAD`, and
+/// Plan §Request pipeline 0, outermost: on every response the Spec 002 CORS headers, the
+/// FR-033 set (`nosniff`, CSP, `Referrer-Policy`, HSTS) with any `Server` header removed,
+/// and `Cache-Control: no-store` on every response to a method other than `GET`, `HEAD`, and
 /// `OPTIONS` (login and writes, FR-035, research R15). It also logs every `503` that
 /// carries an [`Overload`] reason, whichever layer or handler produced it (FR-039).
 pub async fn security_headers(
@@ -223,6 +224,21 @@ pub async fn security_headers(
         header::ACCESS_CONTROL_EXPOSE_HEADERS,
         HeaderValue::from_static(EXPOSED_HEADERS),
     );
+    for (name, value) in [
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'; frame-ancestors 'none'",
+        ),
+        (header::REFERRER_POLICY, "no-referrer"),
+        (
+            header::STRICT_TRANSPORT_SECURITY,
+            "max-age=63072000; includeSubDomains",
+        ),
+    ] {
+        headers.insert(name, HeaderValue::from_static(value));
+    }
+    headers.remove(header::SERVER);
     if !safe {
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
@@ -438,6 +454,9 @@ mod tests {
                 Some("ETag, Retry-After, RateLimit, RateLimit-Policy")
             );
             assert!(get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
+            assert_eq!(get(header::X_CONTENT_TYPE_OPTIONS), Some("nosniff"));
+            assert_eq!(get(header::REFERRER_POLICY), Some("no-referrer"));
+            assert!(get(header::SERVER).is_none());
             let expected = if is_safe(&method) {
                 "public, max-age=300"
             } else {
