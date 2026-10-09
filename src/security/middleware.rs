@@ -6,6 +6,7 @@ use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::http::Method;
 use actix_web::http::header::{self, HeaderMap, HeaderValue};
 use actix_web::middleware::Next;
+use actix_web::rt::time::timeout;
 use actix_web::{Error, HttpMessage, ResponseError, web};
 use sqlx::PgPool;
 
@@ -16,6 +17,7 @@ use super::rate_limit::Decision;
 use super::token::{self, Rejection};
 use crate::api::ROUTES;
 use crate::api::error::{ApiError, TokenProblem};
+use crate::db::DB_TIMEOUT;
 
 /// Prefix of every route in [`ROUTES`].
 pub const API_PREFIX: &str = "/api/v1";
@@ -134,7 +136,12 @@ async fn authorize(req: &ServiceRequest) -> Result<AdminIdentity, ApiError> {
             Rejection::Invalid => TokenProblem::Invalid,
         })
     })?;
-    let account = accounts::find_for_write_check(pool.get_ref(), &claims.sub).await?;
+    let account = timeout(
+        DB_TIMEOUT,
+        accounts::find_for_write_check(pool.get_ref(), &claims.sub),
+    )
+    .await
+    .map_err(|_| ApiError::unavailable())??;
     let Some(account) = account else {
         return Err(ApiError::unauthorized(TokenProblem::Invalid));
     };
