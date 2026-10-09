@@ -70,7 +70,11 @@ fn assert_ok(out: &Out, stdout: &str) {
 
 #[track_caller]
 fn assert_fails(out: &Out, code: i32, stderr: &str) {
-    assert_eq!(out.code, code, "stdout: {} stderr: {}", out.stdout, out.stderr);
+    assert_eq!(
+        out.code, code,
+        "stdout: {} stderr: {}",
+        out.stdout, out.stderr
+    );
     assert_eq!(out.stderr.trim_end(), format!("paleo-accounts: {stderr}"));
     assert_eq!(out.stdout, "");
 }
@@ -235,7 +239,11 @@ async fn stdin_framing(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
     let url = url_of(&opts);
     for (name, input, password) in [
         ("lf-user", format!("{PW}\n").into_bytes(), PW.to_string()),
-        ("crlf-user", format!("{PW}\r\n").into_bytes(), PW.to_string()),
+        (
+            "crlf-user",
+            format!("{PW}\r\n").into_bytes(),
+            PW.to_string(),
+        ),
         ("bare-user", PW.as_bytes().to_vec(), PW.to_string()),
         (
             "two-user",
@@ -284,10 +292,7 @@ async fn usernames_are_validated(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn set_password_replaces_the_credential(
-    pool_opts: PgPoolOptions,
-    opts: PgConnectOptions,
-) {
+async fn set_password_replaces_the_credential(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
     let app = empty_app(pool_opts, opts.clone()).await;
     assert_ok(
         &run(&opts, &["create", "alice", "--admin"], PW),
@@ -310,10 +315,23 @@ async fn set_password_replaces_the_credential(
     assert_ne!(after.hash, before.hash);
     assert_eq!(after.version, before.version + 1, "FR-005 trigger");
     assert_eq!(after.role.as_deref(), Some("admin"));
-    assert_error(&login(&app, "alice", PW, peer(1)).await, 401, "INVALID_CREDENTIALS");
-    assert_eq!(login(&app, "alice", OTHER_PW, peer(1)).await.status.as_u16(), 200);
+    assert_error(
+        &login(&app, "alice", PW, peer(1)).await,
+        401,
+        "INVALID_CREDENTIALS",
+    );
+    assert_eq!(
+        login(&app, "alice", OTHER_PW, peer(1))
+            .await
+            .status
+            .as_u16(),
+        200
+    );
     let claims = token::verify(app.security.keys(), &old_token).unwrap();
-    assert_eq!(claims.ver, before.version, "the old token carries the old version");
+    assert_eq!(
+        claims.ver, before.version,
+        "the old token carries the old version"
+    );
 
     assert_fails(
         &run(&opts, &["set-password", "alice"], "short"),
@@ -331,22 +349,45 @@ async fn set_password_replaces_the_credential(
 #[sqlx::test]
 async fn role_and_status_commands(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
     let app = empty_app(pool_opts, opts.clone()).await;
-    assert_ok(&run(&opts, &["create", "alice"], PW), "created account 'alice'");
+    assert_ok(
+        &run(&opts, &["create", "alice"], PW),
+        "created account 'alice'",
+    );
     let v1 = row(&app.pool, "alice").await.unwrap();
     assert_eq!((v1.role.as_deref(), v1.version), (None, 1));
 
-    assert_ok(&run(&opts, &["grant-admin", "alice"], ""), "granted admin to 'alice'");
+    assert_ok(
+        &run(&opts, &["grant-admin", "alice"], ""),
+        "granted admin to 'alice'",
+    );
     let granted = row(&app.pool, "alice").await.unwrap();
-    assert_eq!((granted.role.as_deref(), granted.version), (Some("admin"), 1));
+    assert_eq!(
+        (granted.role.as_deref(), granted.version),
+        (Some("admin"), 1)
+    );
 
-    assert_ok(&run(&opts, &["revoke-admin", "alice"], ""), "revoked admin from 'alice'");
+    assert_ok(
+        &run(&opts, &["revoke-admin", "alice"], ""),
+        "revoked admin from 'alice'",
+    );
     let revoked = row(&app.pool, "alice").await.unwrap();
-    assert_eq!((revoked.role, revoked.version), (None, 1), "role changes keep tokens");
+    assert_eq!(
+        (revoked.role, revoked.version),
+        (None, 1),
+        "role changes keep tokens"
+    );
 
     assert_ok(&run(&opts, &["disable", "alice"], ""), "disabled 'alice'");
     let disabled = row(&app.pool, "alice").await.unwrap();
-    assert_eq!((disabled.status.as_str(), disabled.version), ("disabled", 2));
-    assert_error(&login(&app, "alice", PW, peer(1)).await, 401, "INVALID_CREDENTIALS");
+    assert_eq!(
+        (disabled.status.as_str(), disabled.version),
+        ("disabled", 2)
+    );
+    assert_error(
+        &login(&app, "alice", PW, peer(1)).await,
+        401,
+        "INVALID_CREDENTIALS",
+    );
 
     assert_ok(&run(&opts, &["enable", "alice"], ""), "enabled 'alice'");
     let enabled = row(&app.pool, "alice").await.unwrap();
@@ -382,13 +423,13 @@ async fn list_prints_one_line_per_account(pool: PgPool) {
     let out = run(&opts, &["list"], "");
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.stderr, "");
-    let lines: Vec<Vec<&str>> = out
-        .stdout
-        .lines()
-        .map(|l| l.split(' ').collect())
-        .collect();
+    let lines: Vec<Vec<&str>> = out.stdout.lines().map(|l| l.split(' ').collect()).collect();
     assert_eq!(lines.len(), 3, "{}", out.stdout);
-    let shape = [("alice", "admin", "active"), ("mid-user", "-", "disabled"), ("zed", "-", "active")];
+    let shape = [
+        ("alice", "admin", "active"),
+        ("mid-user", "-", "disabled"),
+        ("zed", "-", "active"),
+    ];
     for (line, (user, role, status)) in lines.iter().zip(shape) {
         assert_eq!(line.len(), 5, "{line:?}");
         assert_eq!(&line[..3], &[user, role, status]);
@@ -429,7 +470,11 @@ async fn startup_checks_run_first(pool_opts: PgPoolOptions, opts: PgConnectOptio
     let out = run(&opts, &["list"], "");
     assert_eq!(out.code, 1);
     assert!(out.stderr.starts_with("paleo-accounts: "), "{}", out.stderr);
-    assert!(out.stderr.contains("migration(s) pending"), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("migration(s) pending"),
+        "{}",
+        out.stderr
+    );
     assert_eq!(out.stderr.lines().count(), 1);
 
     let out = run_raw(None, &["list"], b"");
@@ -444,7 +489,14 @@ async fn startup_checks_run_first(pool_opts: PgPoolOptions, opts: PgConnectOptio
 async fn nothing_secret_is_printed(pool: PgPool) {
     let opts = pool.connect_options().as_ref().clone();
     let url = url_of(&opts);
-    let secret = url.split("://").nth(1).unwrap().split('@').next().unwrap().to_string();
+    let secret = url
+        .split("://")
+        .nth(1)
+        .unwrap()
+        .split('@')
+        .next()
+        .unwrap()
+        .to_string();
     let mut seen = String::new();
     for (args, stdin) in [
         (&["create", "alice", "--admin"][..], PW),
