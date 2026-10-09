@@ -76,6 +76,19 @@ async fn api_pool_forces_custom_plans(pool_opts: PgPoolOptions, opts: PgConnectO
     assert_eq!(mode, "force_custom_plan");
 }
 
+#[sqlx::test]
+async fn api_pool_limits_each_statement_to_2_seconds(
+    pool_opts: PgPoolOptions,
+    opts: PgConnectOptions,
+) {
+    let app = app(pool_opts, opts).await;
+    let timeout: String = sqlx::query_scalar("SHOW statement_timeout")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(timeout, "2s");
+}
+
 // ---------------------------------------------------------------- reads
 
 /// `n` species `sp-01 …` named `Species 01 …` on one genus and period.

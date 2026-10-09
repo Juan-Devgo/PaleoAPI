@@ -125,9 +125,13 @@ impl fmt::Display for StartupError {
 
 impl std::error::Error for StartupError {}
 
-/// Connection options for the API pool: custom plans for every execution (research R3).
+/// Connection options for the API pool: custom plans for every execution (research R3) and
+/// a server-side limit of [`DB_TIMEOUT`] per statement, lock waits included (research R13).
 pub fn api_connect_options(opts: PgConnectOptions) -> PgConnectOptions {
-    opts.options([("plan_cache_mode", "force_custom_plan")])
+    opts.options([
+        ("plan_cache_mode", "force_custom_plan".to_string()),
+        ("statement_timeout", DB_TIMEOUT.as_millis().to_string()),
+    ])
 }
 
 /// Pause between connection attempts (research R5).
