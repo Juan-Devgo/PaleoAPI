@@ -332,7 +332,30 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-/// `500 INTERNAL_ERROR` after one stderr line with SQLSTATE and constraint only
+/// Whether `e` means the database is unreachable, overloaded, or too slow rather than
+/// that a statement is wrong (research R14): pool exhaustion or shutdown, connection
+/// I/O and TLS failures, `57014` (`statement_timeout`), `57P01`–`57P03` (shutdown,
+/// recovery), `53300` (too many connections), and SQLSTATE class `08`.
+pub fn is_transient(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::Io(_)
+        | sqlx::Error::Tls(_) => true,
+        _ => e
+            .as_database_error()
+            .and_then(|db| db.code())
+            .is_some_and(|code| {
+                matches!(
+                    code.as_ref(),
+                    "57014" | "57P01" | "57P02" | "57P03" | "53300"
+                ) || code.starts_with("08")
+            }),
+    }
+}
+
+/// `503 SERVICE_UNAVAILABLE` for a transient database failure (research R14), otherwise
+/// `500 INTERNAL_ERROR`, after one stderr line with SQLSTATE and constraint only
 /// (plan §Write path). Never logs messages, details, or values.
 pub fn internal(e: &sqlx::Error) -> ApiError {
     match e.as_database_error() {
@@ -343,7 +366,11 @@ pub fn internal(e: &sqlx::Error) -> ApiError {
         ),
         None => eprintln!("paleo_api: internal error: {}", kind(e)),
     }
-    ApiError::internal()
+    if is_transient(e) {
+        ApiError::unavailable()
+    } else {
+        ApiError::internal()
+    }
 }
 
 /// A short, value-free name for a non-database error.
@@ -363,6 +390,102 @@ fn kind(e: &sqlx::Error) -> &'static str {
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
         internal(&e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+    use std::error::Error as StdError;
+    use std::fmt;
+
+    use actix_web::http::StatusCode;
+    use sqlx::error::{DatabaseError, ErrorKind};
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct Sqlstate(&'static str);
+
+    impl fmt::Display for Sqlstate {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("secret detail of the server")
+        }
+    }
+
+    impl StdError for Sqlstate {}
+
+    impl DatabaseError for Sqlstate {
+        fn message(&self) -> &str {
+            "secret detail of the server"
+        }
+        fn code(&self) -> Option<Cow<'_, str>> {
+            Some(Cow::Borrowed(self.0))
+        }
+        fn as_error(&self) -> &(dyn StdError + Send + Sync + 'static) {
+            self
+        }
+        fn as_error_mut(&mut self) -> &mut (dyn StdError + Send + Sync + 'static) {
+            self
+        }
+        fn into_error(self: Box<Self>) -> Box<dyn StdError + Send + Sync + 'static> {
+            self
+        }
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::Other
+        }
+    }
+
+    fn state(code: &'static str) -> sqlx::Error {
+        sqlx::Error::Database(Box::new(Sqlstate(code)))
+    }
+
+    #[test]
+    fn transient_errors_are_503() {
+        let io = || sqlx::Error::Io(std::io::Error::other("connection reset"));
+        let errors = [
+            sqlx::Error::PoolTimedOut,
+            sqlx::Error::PoolClosed,
+            io(),
+            sqlx::Error::Tls("handshake".into()),
+            state("57014"),
+            state("57P01"),
+            state("57P02"),
+            state("57P03"),
+            state("53300"),
+            state("08000"),
+            state("08006"),
+            state("08P01"),
+        ];
+        for e in errors {
+            assert!(is_transient(&e), "{e:?}");
+            let api = internal(&e);
+            assert_eq!(api.status(), StatusCode::SERVICE_UNAVAILABLE, "{e:?}");
+            assert_eq!(api.code(), "SERVICE_UNAVAILABLE");
+            assert!(!api.message().contains("secret"));
+            assert_eq!(ApiError::from(e).status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+
+    #[test]
+    fn other_errors_stay_500() {
+        let errors = [
+            sqlx::Error::RowNotFound,
+            sqlx::Error::Protocol("bad message".into()),
+            sqlx::Error::WorkerCrashed,
+            state("42P01"),
+            state("23505"),
+            state("40001"),
+            state("57000"),
+            state("53200"),
+            state("80000"),
+        ];
+        for e in errors {
+            assert!(!is_transient(&e), "{e:?}");
+            let api = internal(&e);
+            assert_eq!(api.status(), StatusCode::INTERNAL_SERVER_ERROR, "{e:?}");
+            assert_eq!(api.code(), "INTERNAL_ERROR");
+        }
     }
 }
 
