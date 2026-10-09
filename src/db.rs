@@ -55,6 +55,19 @@ pub enum SettingProblem {
     ProxyEntry(String),
 }
 
+impl StartupError {
+    /// The `reason` of the `startup_refused` event: only the FR-014 `JWT_SECRET` refusals
+    /// have one (contracts/security-events.md).
+    pub fn refusal_reason(&self) -> Option<&'static str> {
+        match self {
+            Self::MissingSecret => Some("jwt_secret_missing"),
+            Self::ShortSecret => Some("jwt_secret_short"),
+            Self::PlaceholderSecret => Some("jwt_secret_placeholder"),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for StartupError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

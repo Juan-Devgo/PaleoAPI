@@ -102,7 +102,7 @@
 - [x] T076 [P] [US6] Write `startup_refused` tests (plan §Cases `tests/startup.rs`) in `tests/startup.rs`
 - [x] T077 [US6] Emit `auth_rejected`, `forbidden`, `admin_write`, `rate_limited` (`general`), `overloaded` (contracts/security-events.md) in `src/security/middleware.rs`
 - [x] T078 [US6] Emit `login_succeeded`, `login_failed`, `login_locked`, `rate_limited` (`login_client`, `login_username`, deduped per data-model §3.3) (contracts/security-events.md) in `src/api/auth.rs`
-- [ ] T079 [US6] Emit `startup_refused` for the FR-014 refusals (plan §Startup contract) in `src/main.rs`
+- [x] T079 [US6] Emit `startup_refused` for the FR-014 refusals (plan §Startup contract) in `src/main.rs`
 
 ## Phase 9: US7 — Safe defaults and documented routes (P2)
 

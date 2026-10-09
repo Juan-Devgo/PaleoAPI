@@ -1,6 +1,7 @@
 use std::net::TcpListener;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use paleo_api::api;
 use paleo_api::config::{SecurityConfig, database_options_from_env, security_config_from_env};
@@ -9,6 +10,7 @@ use paleo_api::db::{
     collation_version_warning, connect_with_retry, verify_migrations,
 };
 use paleo_api::security::Security;
+use paleo_api::security::events::{Event, EventKind, EventSink, StdoutSink};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{Connection, PgPool};
 
@@ -35,6 +37,13 @@ async fn main() -> ExitCode {
         Ok(checked) => checked,
         Err(err) => {
             eprintln!("paleo_api: {err}");
+            // The FR-014 refusals are also security events (FR-039); `Security` does not
+            // exist yet, so the line goes straight to the production sink.
+            if let Some(reason) = err.refusal_reason() {
+                let mut event = Event::new(EventKind::StartupRefused);
+                event.reason = Some(reason);
+                StdoutSink.write_line(&event.to_line(SystemTime::now()));
+            }
             return ExitCode::FAILURE;
         }
     };
