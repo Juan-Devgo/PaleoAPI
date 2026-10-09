@@ -92,7 +92,7 @@
 - [x] T069 [P] [US5] Write sliding-log, reservation, and per-client `rate_limited` dedupe unit tests (data-model §3.3) in `src/security/login_limit.rs`
 - [x] T070 [P] [US5] Write AC 6 identical-response tests with a fresh peer per case and timing tests (plan §Cases `security/login.rs`) in `tests/api/security/login.rs`
 - [x] T071 [P] [US5] Write login-limit tests for AC 14 (plan §Cases `security/rate_limit.rs`) in `tests/api/security/rate_limit.rs`
-- [ ] T072 [P] [US5] Write the hashing-bound test for AC 29 (plan §Cases `security/limits.rs`) in `tests/api/security/limits.rs`
+- [x] T072 [P] [US5] Write the hashing-bound test for AC 29 (plan §Cases `security/limits.rs`) in `tests/api/security/limits.rs`
 - [ ] T073 [US5] Implement per-client and per-username logs with reservations and the per-client `logged` slots (data-model §3.3; research R3) in `src/security/login_limit.rs`
 - [ ] T074 [US5] Add login steps 1, 4, 5 (plan §Login; research R3, R8) in `src/api/auth.rs`
 

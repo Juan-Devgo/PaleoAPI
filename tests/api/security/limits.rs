@@ -217,3 +217,44 @@ async fn a_write_blocked_on_a_lock_is_503_after_2_seconds(
     // The lock is gone: the same write now succeeds.
     assert_eq!(live.send(&patch_era(&live)).status, 200);
 }
+
+fn login_request(username: &str, password: &str) -> Vec<u8> {
+    let body = json!({ "username": username, "password": password }).to_string();
+    format!(
+        "POST /api/v1/auth/login HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .into_bytes()
+}
+
+/// AC 29: with every hashing permit taken a login is `503` with `Retry-After: 1`, the
+/// attempt is not counted against the username, and service is normal once a permit is free.
+#[sqlx::test]
+async fn login_is_503_while_every_hashing_permit_is_taken(
+    pool_opts: PgPoolOptions,
+    opts: PgConnectOptions,
+) {
+    let (live, _pool) = live(
+        pool_opts,
+        opts,
+        &[
+            ("MAX_CONCURRENT_PASSWORD_HASHES", "1"),
+            ("LOGIN_LIMIT_PER_USERNAME", "1"),
+        ],
+    )
+    .await;
+    let held = live.security.hashes().try_acquire().expect("free permit");
+    for _ in 0..3 {
+        let busy = live.send(&login_request(ADMIN, TEST_PASSWORD));
+        busy.assert_error(503, "SERVICE_UNAVAILABLE");
+        assert_eq!(busy.header("retry-after"), Some("1"));
+        assert!(!String::from_utf8_lossy(&busy.body).contains("access_token"));
+    }
+    assert_eq!(live.security.hashes().in_use(), 1, "no extra permit taken");
+    drop(held);
+
+    let ok = live.send(&login_request(ADMIN, TEST_PASSWORD));
+    assert_eq!(ok.status, 200, "{}", String::from_utf8_lossy(&ok.body));
+    assert_eq!(live.security.hashes().in_use(), 0);
+}
