@@ -147,6 +147,7 @@ fn database_url_only_in_allowed_test_files() {
     let allowed = [
         root().join("tests/startup.rs"),
         root().join("tests/repo_hygiene.rs"),
+        root().join("tests/api/security/accounts_cli.rs"),
     ];
     let mut offenders = Vec::new();
     let mut stack = vec![root().join("tests")];
