@@ -99,7 +99,7 @@
 ## Phase 8: US6 — Security event log (P2)
 
 - [x] T075 [P] [US6] Write event tests, including `overloaded` and per-reason `rate_limited` dedupe (plan §Cases `security/logging.rs`) in `tests/api/security/logging.rs`
-- [ ] T076 [P] [US6] Write `startup_refused` tests (plan §Cases `tests/startup.rs`) in `tests/startup.rs`
+- [x] T076 [P] [US6] Write `startup_refused` tests (plan §Cases `tests/startup.rs`) in `tests/startup.rs`
 - [ ] T077 [US6] Emit `auth_rejected`, `forbidden`, `admin_write`, `rate_limited` (`general`), `overloaded` (contracts/security-events.md) in `src/security/middleware.rs`
 - [ ] T078 [US6] Emit `login_succeeded`, `login_failed`, `login_locked`, `rate_limited` (`login_client`, `login_username`, deduped per data-model §3.3) (contracts/security-events.md) in `src/api/auth.rs`
 - [ ] T079 [US6] Emit `startup_refused` for the FR-014 refusals (plan §Startup contract) in `src/main.rs`

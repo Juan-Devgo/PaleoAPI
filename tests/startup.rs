@@ -341,11 +341,30 @@ async fn warns_about_collation_drift_and_starts(pool: PgPool) {
 
 // ---------------------------------------------------------------- Spec 003 settings (AC 9)
 
-/// Refused before any connection attempt, without printing `secret`.
+/// The one `startup_refused` line on stdout (contracts/security-events.md, FR-039): valid
+/// JSON, an RFC 3339 `ts`, the matching `reason`, and no request fields.
 #[track_caller]
-fn assert_secret_refused(env: &[(&str, &str)], secret: &str, gist: &str) {
+fn assert_startup_refused_event(out: &Outcome, reason: &str) {
+    let lines: Vec<&str> = out.stdout.lines().collect();
+    assert_eq!(lines.len(), 1, "one stdout line expected: {:?}", out.stdout);
+    let event: serde_json::Value = serde_json::from_str(lines[0]).expect("a JSON line");
+    assert_eq!(event["event"], "startup_refused");
+    assert_eq!(event["reason"], reason);
+    let ts = event["ts"].as_str().expect("ts");
+    assert!(
+        ts.len() == 24 && ts.ends_with('Z') && ts.as_bytes()[10] == b'T',
+        "{ts}"
+    );
+    assert_eq!(event.as_object().unwrap().len(), 3, "{event}");
+}
+
+/// Refused before any connection attempt, without printing `secret`, with one
+/// `startup_refused` event of `reason`.
+#[track_caller]
+fn assert_secret_refused(env: &[(&str, &str)], secret: &str, gist: &str, reason: &str) {
     let out = run_api_env(Some(&unreachable_url()), env);
     assert_refused(&out, gist);
+    assert_startup_refused_event(&out, reason);
     assert!(
         out.elapsed < Duration::from_secs(5),
         "checked before connecting; took {:?}",
@@ -359,8 +378,9 @@ fn assert_secret_refused(env: &[(&str, &str)], secret: &str, gist: &str) {
 
 #[test]
 fn refuses_without_a_signing_secret() {
-    assert_secret_refused(&[], "", "JWT_SECRET is not set");
-    assert_secret_refused(&[("JWT_SECRET", "")], "", "JWT_SECRET is not set");
+    let gist = "JWT_SECRET is not set";
+    assert_secret_refused(&[], "", gist, "jwt_secret_missing");
+    assert_secret_refused(&[("JWT_SECRET", "")], "", gist, "jwt_secret_missing");
 }
 
 #[test]
@@ -371,6 +391,7 @@ fn refuses_a_secret_shorter_than_32_bytes() {
         &[("JWT_SECRET", secret)],
         secret,
         "JWT_SECRET is shorter than 32 bytes",
+        "jwt_secret_short",
     );
 }
 
@@ -386,6 +407,7 @@ fn refuses_the_placeholder_secret() {
         &[("JWT_SECRET", placeholder)],
         placeholder,
         "JWT_SECRET is still the placeholder",
+        "jwt_secret_placeholder",
     );
 }
 
@@ -405,6 +427,7 @@ fn refuses_an_invalid_limit_setting_naming_the_variable() {
         out.elapsed
     );
     assert!(!out.stderr.contains(TEST_SECRET));
+    assert_eq!(out.stdout, "", "only FR-014 refusals emit startup_refused");
 
     let out = run_api_env(
         Some(&unreachable_url()),
@@ -417,4 +440,5 @@ fn refuses_an_invalid_limit_setting_naming_the_variable() {
         &out,
         "TRUSTED_PROXIES entry 'proxy.local' is not an IP address or CIDR range.",
     );
+    assert_eq!(out.stdout, "", "only FR-014 refusals emit startup_refused");
 }
