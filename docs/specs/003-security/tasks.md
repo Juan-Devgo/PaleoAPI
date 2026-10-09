@@ -113,7 +113,7 @@
 - [x] T084 [P] [US7] Update preflight expectations (research R15) in `tests/api/global.rs`
 - [x] T085 [US7] Add the FR-033 headers and `Server` removal to `security_headers` (research R15) in `src/security/middleware.rs`
 - [x] T086 [US7] Answer preflight with the research R15 methods, headers, and max-age in `src/api/mod.rs`
-- [ ] T087 [US7] Merge the remaining responses, headers, and `info.description` changes of contracts/openapi.yaml in `docs/openapi.yaml`
+- [x] T087 [US7] Merge the remaining responses, headers, and `info.description` changes of contracts/openapi.yaml in `docs/openapi.yaml`
 
 ## Phase 10: Polish
 
