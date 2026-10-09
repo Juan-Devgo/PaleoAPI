@@ -19,6 +19,7 @@ use std::time::{Instant, SystemTime};
 use crate::config::SecurityConfig;
 use clock::{Clock, SystemClock};
 use events::{Event, EventSink, StdoutSink};
+use login_limit::LoginLimiter;
 use permits::Permits;
 use rate_limit::RateLimiter;
 use token::Keys;
@@ -49,6 +50,7 @@ pub struct Security {
     requests: Arc<Permits>,
     hashes: Arc<Permits>,
     general: RateLimiter,
+    login: LoginLimiter,
     clock: Arc<dyn Clock>,
     sink: Arc<dyn EventSink>,
     dummy_hash: String,
@@ -81,6 +83,12 @@ impl Security {
                 config.rate_limit_per_minute,
                 config.rate_limit_burst,
                 capacities.general_clients,
+            ),
+            login: LoginLimiter::new(
+                config.login_limit_per_client,
+                config.login_limit_per_username,
+                config.login_limit_window,
+                capacities.login_keys,
             ),
             dummy_hash: password::dummy_hash(),
             config,
@@ -120,6 +128,11 @@ impl Security {
     /// The general per-client limit (FR-021, data-model §3.2).
     pub fn general(&self) -> &RateLimiter {
         &self.general
+    }
+
+    /// The per-client and per-username login logs (FR-022, data-model §3.3).
+    pub fn login(&self) -> &LoginLimiter {
+        &self.login
     }
 
     /// Hash verified for unknown usernames so every failed login costs the same (research R8).

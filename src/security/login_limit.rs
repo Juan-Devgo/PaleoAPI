@@ -1,8 +1,8 @@
 //! Login limits: per-client and per-username sliding logs (FR-022, data-model §3.3).
 
 use std::collections::{HashMap, VecDeque};
-use std::hash::RandomState;
-use std::sync::Mutex;
+use std::hash::{BuildHasher, RandomState};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use super::client_ip::ClientKey;
@@ -73,55 +73,198 @@ pub struct Reservation<'a> {
     done: bool,
 }
 
+/// Whole seconds, rounded up, at least 1.
+fn retry_secs(until: Duration) -> u64 {
+    u64::try_from(until.as_nanos().div_ceil(1_000_000_000))
+        .unwrap_or(u64::MAX)
+        .max(1)
+}
+
+/// Drops the instants that left the window.
+fn prune(log: &mut VecDeque<Instant>, now: Instant, window: Duration) {
+    while log
+        .front()
+        .is_some_and(|&at| now.saturating_duration_since(at) >= window)
+    {
+        log.pop_front();
+    }
+}
+
+/// Seconds until the oldest instant leaves the window (`1` for an empty log).
+fn retry_after(log: &VecDeque<Instant>, now: Instant, window: Duration) -> u64 {
+    log.front().map_or(1, |&oldest| {
+        retry_secs((oldest + window).saturating_duration_since(now))
+    })
+}
+
+/// `true` (and the slot is set to `now`) when the slot is empty or outside the window:
+/// one `rate_limited` line per client and reason per window (FR-039).
+fn dedupe(slot: &mut Option<Instant>, now: Instant, window: Duration) -> bool {
+    let first = slot.is_none_or(|at| now.saturating_duration_since(at) >= window);
+    if first {
+        *slot = Some(now);
+    }
+    first
+}
+
+impl ClientEntry {
+    /// No live instant and no live logged slot: equal to an absent entry.
+    fn is_idle(&mut self, now: Instant, window: Duration) -> bool {
+        prune(&mut self.log, now, window);
+        self.log.is_empty()
+            && self
+                .logged
+                .iter()
+                .all(|slot| slot.is_none_or(|at| now.saturating_duration_since(at) >= window))
+    }
+}
+
+impl UserEntry {
+    fn is_idle(&mut self, now: Instant, window: Duration) -> bool {
+        prune(&mut self.log, now, window);
+        self.log.is_empty() && self.pending == 0
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> Result<MutexGuard<'_, T>, LoginLimitError> {
+    m.lock().map_err(|_| LoginLimitError::Poisoned)
+}
+
 impl LoginLimiter {
+    /// Limits of `per_client` requests and `per_username` failures per `window`; each
+    /// table holds up to `capacity` keys.
     pub fn new(per_client: u32, per_username: u32, window: Duration, capacity: usize) -> Self {
-        let _ = (per_client, per_username, window, capacity);
-        todo!()
+        Self {
+            clients: Mutex::new(HashMap::new()),
+            usernames: Mutex::new(HashMap::new()),
+            hasher: RandomState::new(),
+            per_client: per_client.max(1) as usize,
+            per_username: per_username.max(1) as usize,
+            window,
+            capacity: capacity.max(1),
+        }
     }
 
     pub fn per_client(&self) -> u32 {
-        todo!()
+        u32::try_from(self.per_client).unwrap_or(u32::MAX)
     }
 
     pub fn per_username(&self) -> u32 {
-        todo!()
+        u32::try_from(self.per_username).unwrap_or(u32::MAX)
     }
 
     pub fn window(&self) -> Duration {
-        todo!()
+        self.window
     }
 
     /// Plan §Login step 1: records the request unless the client's log is full.
+    /// A rejected request is not recorded.
     pub fn admit_client(&self, key: ClientKey, now: Instant) -> Result<Admission, LoginLimitError> {
-        let _ = (key, now);
-        todo!()
+        let mut clients = lock(&self.clients)?;
+        if !clients.contains_key(&key) && clients.len() >= self.capacity {
+            clients.retain(|_, entry| !entry.is_idle(now, self.window));
+            if clients.len() >= self.capacity {
+                return Err(LoginLimitError::Full);
+            }
+        }
+        let entry = clients.entry(key).or_default();
+        prune(&mut entry.log, now, self.window);
+        if entry.log.len() >= self.per_client {
+            return Ok(Admission::Rejected(Rejected {
+                retry_after: retry_after(&entry.log, now, self.window),
+                log: dedupe(&mut entry.logged[0], now, self.window),
+            }));
+        }
+        entry.log.push_back(now);
+        Ok(Admission::Allowed)
     }
 
-    /// Plan §Login step 4: reserves an attempt for `username`, or rejects.
+    /// Plan §Login step 4: reserves an attempt for `username`, or rejects when the
+    /// failures in the window plus the unfinished attempts reach the limit.
     pub fn reserve(
         &self,
         key: ClientKey,
         username: &str,
         now: Instant,
     ) -> Result<Reserve<'_>, LoginLimitError> {
-        let _ = (key, username, now);
-        todo!()
+        let id = self.hasher.hash_one(username);
+        let retry = {
+            let mut usernames = lock(&self.usernames)?;
+            if !usernames.contains_key(&id) && usernames.len() >= self.capacity {
+                usernames.retain(|_, entry| !entry.is_idle(now, self.window));
+                if usernames.len() >= self.capacity {
+                    return Err(LoginLimitError::Full);
+                }
+            }
+            let entry = usernames.entry(id).or_default();
+            prune(&mut entry.log, now, self.window);
+            if entry.log.len() + entry.pending >= self.per_username {
+                Some(retry_after(&entry.log, now, self.window))
+            } else {
+                entry.pending += 1;
+                None
+            }
+        };
+        let Some(retry_after) = retry else {
+            return Ok(Reserve::Reserved(Reservation {
+                limiter: self,
+                id,
+                done: false,
+            }));
+        };
+        // The client entry exists unless the window expired it; then there is nothing
+        // to dedupe against and the rejection is logged.
+        let log = lock(&self.clients)?
+            .get_mut(&key)
+            .is_none_or(|entry| dedupe(&mut entry.logged[1], now, self.window));
+        Ok(Reserve::Rejected(Rejected { retry_after, log }))
+    }
+
+    /// Drops one pending attempt; with `failed_at`, records a failure in its place.
+    /// Returns whether the log is then full. Ignores a poisoned lock: the next
+    /// check reports it.
+    fn finish(&self, id: u64, failed_at: Option<Instant>) -> bool {
+        let mut usernames = self
+            .usernames
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(entry) = usernames.get_mut(&id) else {
+            return false;
+        };
+        entry.pending = entry.pending.saturating_sub(1);
+        let Some(now) = failed_at else {
+            return false;
+        };
+        prune(&mut entry.log, now, self.window);
+        entry.log.push_back(now);
+        entry.log.len() >= self.per_username
     }
 }
 
 impl Reservation<'_> {
     /// Records the failure and drops the reservation. `true`: this failure filled the
     /// username's log (`login_locked`).
-    pub fn fail(self, now: Instant) -> bool {
-        let _ = now;
-        todo!()
+    pub fn fail(mut self, now: Instant) -> bool {
+        self.done = true;
+        self.limiter.finish(self.id, Some(now))
     }
 }
 
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            self.limiter.finish(self.id, None);
+        }
+    }
+}
+
+/// Fail closed (research R14): a full table is load (`503`), a poisoned lock a defect (`500`).
 impl From<LoginLimitError> for ApiError {
     fn from(err: LoginLimitError) -> Self {
-        let _ = err;
-        todo!()
+        match err {
+            LoginLimitError::Full => ApiError::busy(),
+            LoginLimitError::Poisoned => ApiError::internal(),
+        }
     }
 }
 
