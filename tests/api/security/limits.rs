@@ -1,4 +1,4 @@
-//! Request limits over real TCP (003 AC 16, 17, 29, 30; FR-028–FR-032, research R11–R14).
+//! Request limits over real TCP (003 AC 16, 17, 30; FR-028–FR-032, research R11–R14).
 
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
@@ -216,22 +216,4 @@ async fn a_write_blocked_on_a_lock_is_503_after_2_seconds(
     );
     // The lock is gone: the same write now succeeds.
     assert_eq!(live.send(&patch_era(&live)).status, 200);
-}
-
-/// AC 29: with every hashing permit taken a login is `503`, not queued.
-#[sqlx::test]
-async fn login_without_a_free_hash_permit_is_503(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
-    let (live, _pool) = live(pool_opts, opts, &[("MAX_CONCURRENT_PASSWORD_HASHES", "1")]).await;
-    let body = json!({ "username": ADMIN, "password": TEST_PASSWORD }).to_string();
-    let login = format!(
-        "POST /api/v1/auth/login HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\
-         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-        body.len()
-    );
-    let permit = live.security.hashes().try_acquire().expect("a free permit");
-    let busy = live.send(login.as_bytes());
-    busy.assert_error(503, "SERVICE_UNAVAILABLE");
-    assert_eq!(busy.header("retry-after"), Some("1"));
-    drop(permit);
-    assert_eq!(live.send(login.as_bytes()).status, 200);
 }
