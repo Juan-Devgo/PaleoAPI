@@ -562,3 +562,168 @@ pub async fn explain_sql(pool: &PgPool, sql: &str, binds: Vec<Bind>) -> String {
     tx.rollback().await.unwrap();
     lines.join("\n")
 }
+
+// ---------------------------------------------------------------- TCP (003 plan §Testing)
+
+/// A real server on `127.0.0.1:0` in its own thread with its own actix `System`,
+/// stopped when dropped. Its pool is built there with the production connect options.
+pub struct Live {
+    pub addr: SocketAddr,
+    pub security: Arc<Security>,
+    handle: actix_web::dev::ServerHandle,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+/// Starts the production server (`api::serve`) over a pool on `opts`.
+pub fn serve(opts: PgConnectOptions, config: SecurityConfig) -> Live {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let security = Arc::new(Security::with(
+        config,
+        Capacities::default(),
+        Arc::new(SystemClock),
+        Arc::new(CaptureSink::default()),
+    ));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let shared = security.clone();
+    let thread = std::thread::spawn(move || {
+        actix_web::rt::System::new().block_on(async move {
+            let pool = PgPoolOptions::new()
+                .max_connections(10)
+                .acquire_timeout(paleo_api::db::DB_TIMEOUT)
+                .connect_lazy_with(api_connect_options(opts));
+            let server = paleo_api::api::serve(listener, pool, shared).expect("serve");
+            tx.send(server.handle()).expect("handle");
+            let _ = server.await;
+        });
+    });
+    Live {
+        addr,
+        security,
+        handle: rx.recv().expect("server started"),
+        thread: Some(thread),
+    }
+}
+
+impl Live {
+    pub fn connect(&self) -> std::net::TcpStream {
+        let stream = std::net::TcpStream::connect(self.addr).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(60)))
+            .expect("read timeout");
+        stream
+    }
+
+    pub fn token(&self, username: &str) -> String {
+        token_for(&self.security, username)
+    }
+
+    /// One request on a new connection (`Connection: close` is the caller's to send).
+    pub fn send(&self, raw: &[u8]) -> Raw {
+        use std::io::Write;
+        let mut stream = self.connect();
+        stream.write_all(raw).expect("write");
+        read_raw(&mut stream).expect("a response")
+    }
+
+    /// A `GET` with `Connection: close`.
+    pub fn get(&self, target: &str) -> Raw {
+        self.send(
+            format!("GET {target} HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n").as_bytes(),
+        )
+    }
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        let handle = self.handle.clone();
+        let _ = std::thread::spawn(move || {
+            actix_web::rt::System::new().block_on(handle.stop(false));
+        })
+        .join();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// A response read off a raw socket.
+#[derive(Debug)]
+pub struct Raw {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl Raw {
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+    pub fn json(&self) -> Value {
+        serde_json::from_slice(&self.body)
+            .unwrap_or_else(|e| panic!("body {:?}: {e}", String::from_utf8_lossy(&self.body)))
+    }
+    #[track_caller]
+    pub fn assert_error(&self, status: u16, code: &str) {
+        assert_eq!(
+            self.status,
+            status,
+            "{:?}",
+            String::from_utf8_lossy(&self.body)
+        );
+        assert_eq!(self.json()["error"]["code"], code);
+        assert!(
+            self.json()["error"]["message"]
+                .as_str()
+                .is_some_and(|m| !m.is_empty())
+        );
+    }
+}
+
+/// Reads one response (by `Content-Length`, else to the end of the stream).
+/// `None` when the stream ends before a status line.
+pub fn read_raw(stream: &mut std::net::TcpStream) -> Option<Raw> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let head_end = loop {
+        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break i + 4;
+        }
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => {
+                if buf.is_empty() {
+                    return None;
+                }
+                break buf.len();
+            }
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+        }
+    };
+    let head = String::from_utf8_lossy(&buf[..head_end]).into_owned();
+    let mut lines = head.split("\r\n");
+    let status = lines.next()?.split(' ').nth(1)?.parse().ok()?;
+    let headers: Vec<(String, String)> = lines
+        .filter_map(|l| l.split_once(':'))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect();
+    let length = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.parse::<usize>().ok());
+    let mut body = buf[head_end.min(buf.len())..].to_vec();
+    while length.is_none_or(|n| body.len() < n) {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => body.extend_from_slice(&chunk[..n]),
+        }
+    }
+    Some(Raw {
+        status,
+        headers,
+        body,
+    })
+}
