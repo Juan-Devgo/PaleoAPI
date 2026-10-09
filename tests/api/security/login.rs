@@ -231,3 +231,97 @@ async fn invalid_bodies_are_422_without_hashing() {
     assert_eq!(app.security.hashes().in_use(), 1);
     drop(held);
 }
+
+/// Every header as sorted `(name, value)` pairs, without `Date`.
+fn header_list(resp: &Resp) -> Vec<(String, Vec<u8>)> {
+    let mut list: Vec<(String, Vec<u8>)> = resp
+        .headers
+        .iter()
+        .filter(|(name, _)| name.as_str() != "date")
+        .map(|(name, value)| (name.to_string(), value.as_bytes().to_vec()))
+        .collect();
+    list.sort();
+    list
+}
+
+/// The three failures an attacker could tell apart if they differed (FR-008, AC 6).
+const UNKNOWN: (&str, &str) = ("nobody", TEST_PASSWORD);
+const WRONG: (&str, &str) = (USER, "paleo-test-password-2025");
+const DISABLED: (&str, &str) = ("sleeper", TEST_PASSWORD);
+
+async fn with_disabled_account(pool_opts: PgPoolOptions, opts: PgConnectOptions) -> TestApp {
+    let app = app_with(
+        pool_opts,
+        opts,
+        SecuritySettings {
+            manual_clock: true,
+            ..SecuritySettings::default()
+        },
+    )
+    .await;
+    seed_account(&app.pool, "sleeper", None).await;
+    exec(
+        &app.pool,
+        "UPDATE accounts SET status = 'disabled' WHERE username = 'sleeper'",
+    )
+    .await
+    .unwrap();
+    app
+}
+
+/// AC 6: unknown username, wrong password, and disabled account answer with the same
+/// status, headers (except `Date`), and body. Each case comes from a fresh peer under a
+/// manual clock, so the `RateLimit` values match too.
+#[sqlx::test]
+async fn the_three_failures_are_byte_identical(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
+    let app = with_disabled_account(pool_opts, opts).await;
+    let mut seen = Vec::new();
+    for (n, (username, password)) in [UNKNOWN, WRONG, DISABLED].into_iter().enumerate() {
+        let resp = login(&app, username, password, peer(10 + n as u32)).await;
+        assert_invalid_credentials(&resp);
+        seen.push((resp.status, header_list(&resp), resp.body.to_vec()));
+    }
+    assert_eq!(seen[0], seen[1], "unknown vs wrong password");
+    assert_eq!(seen[0], seen[2], "unknown vs disabled");
+    // A username that is not a slug looks the same as an unknown one.
+    let resp = login(&app, "Not A Slug", TEST_PASSWORD, peer(20)).await;
+    assert_eq!(
+        (resp.status, header_list(&resp), resp.body.to_vec()),
+        seen[0]
+    );
+}
+
+fn median(mut samples: Vec<std::time::Duration>) -> std::time::Duration {
+    samples.sort();
+    samples[samples.len() / 2]
+}
+
+/// AC 6: each failure costs one Argon2 verification, so the median times of the three
+/// cases are within 25% of each other. Interleaved to even out machine noise.
+#[sqlx::test]
+async fn the_three_failures_cost_the_same(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
+    let app = with_disabled_account(pool_opts, opts).await;
+    const ROUNDS: u32 = 50;
+    let mut samples: [Vec<std::time::Duration>; 3] = Default::default();
+    // One unmeasured round warms the caches.
+    for round in 0..=ROUNDS {
+        for (case, (username, password)) in [UNKNOWN, WRONG, DISABLED].into_iter().enumerate() {
+            let from = peer(1_000 + round * 3 + case as u32);
+            let started = std::time::Instant::now();
+            let resp = login(&app, username, password, from).await;
+            let took = started.elapsed();
+            assert_eq!(resp.status.as_u16(), 401, "{username}");
+            if round > 0 {
+                samples[case].push(took);
+            }
+        }
+    }
+    let [unknown, wrong, disabled] = samples.map(median);
+    for (name, other) in [("wrong password", wrong), ("disabled", disabled)] {
+        let (lo, hi) = (unknown.min(other), unknown.max(other));
+        assert!(
+            hi.as_secs_f64() <= lo.as_secs_f64() * 1.25,
+            "unknown {unknown:?} vs {name} {other:?}"
+        );
+    }
+}
