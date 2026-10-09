@@ -48,7 +48,9 @@ use sqlx::PgPool;
 
 use self::error::{ApiError, no_store_on_get_errors};
 use crate::security::Security;
-use crate::security::middleware::{rate_limit, require_admin, security_headers};
+use crate::security::middleware::{
+    capacity, rate_limit, request_limits, require_admin, security_headers,
+};
 
 /// Every path under `/api/v1` and the methods it answers (OpenAPI drift test).
 pub const ROUTES: &[(&str, &[Method])] = &[
@@ -268,7 +270,8 @@ fn routes(cfg: &mut web::ServiceConfig) {
 
 /// Builds the application: routes, security layers, `OPTIONS`, `404`/`405` envelopes
 /// (002 and 003 plan §Request pipeline). Layers, outermost first: `security_headers`,
-/// `rate_limit`, `OPTIONS` short-circuit, `require_admin`, `ErrorHandlers`, router.
+/// `request_limits`, `capacity`, `rate_limit`, `OPTIONS` short-circuit, `require_admin`,
+/// `ErrorHandlers`, router.
 pub fn app(
     pool: PgPool,
     security: Arc<Security>,
@@ -306,6 +309,8 @@ pub fn app(
             }
         })
         .wrap(from_fn(rate_limit))
+        .wrap(from_fn(capacity))
+        .wrap(from_fn(request_limits))
         .wrap(from_fn(security_headers))
 }
 

@@ -77,7 +77,7 @@
 - [x] T060 [P] [US4] Add the 30 s body deadline → `408` (research R11; plan §Deviations D2) in `src/api/http.rs`
 - [x] T061 [US4] Implement `request_limits` and `capacity` (research R11, R12) in `src/security/middleware.rs`
 - [x] T062 [US4] Run the `require_admin` account lookup under `DB_TIMEOUT` and apply the fail-closed statuses (research R13, R14) in `src/security/middleware.rs`
-- [ ] T063 [US4] Wire `request_limits` and `capacity` (plan §Request pipeline 1–2) in `src/api/mod.rs`
+- [x] T063 [US4] Wire `request_limits` and `capacity` (plan §Request pipeline 1–2) in `src/api/mod.rs`
 - [ ] T064 [US4] Set server timeouts including `keep_alive(15 s)` and pool `acquire_timeout` (plan §Startup contract; research R11, R13) in `src/main.rs`
 
 ## Phase 6: US2 — Operator account procedure (P1)
