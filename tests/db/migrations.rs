@@ -77,7 +77,11 @@ async fn migrations_build_full_schema_on_empty_database(pool: PgPool) {
         .map(|m| m.version)
         .collect();
     assert_eq!(applied.iter().map(|r| r.0).collect::<Vec<_>>(), up);
-    assert_eq!(up.len(), 6, "data-model §7 defines six migrations");
+    assert_eq!(
+        up.len(),
+        7,
+        "001 data-model §7 defines six migrations, 003 data-model §1 the seventh"
+    );
 }
 
 #[sqlx::test(migrations = false)]

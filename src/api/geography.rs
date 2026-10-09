@@ -6,7 +6,6 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use serde::Serialize;
 use sqlx::{PgConnection, PgPool, Postgres, QueryBuilder};
 
-use super::auth::AdminGate;
 use super::db_error::{Ctx, Op, continent_countries, map_write};
 use super::error::{ApiError, Resource};
 use super::http::{Many, One, cached_json, created, updated};
@@ -356,9 +355,8 @@ pub async fn create_continent(
     req: HttpRequest,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let mut tx = begin_write(&pool).await?;
     let mut o = Obj::new(body)?;
     let id = o.required("id", slug);
@@ -396,9 +394,8 @@ pub async fn update_continent(
     path: web::Path<String>,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let id = path.into_inner();
     if !is_slug(&id) {
         return Err(ApiError::not_found(Resource::Continent, &id));
@@ -464,12 +461,10 @@ pub async fn delete_continent(
     req: HttpRequest,
     path: web::Path<String>,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
     let id = path.into_inner();
     delete_resource(
         &req,
-        gate.get_ref(),
         &pool,
         Resource::Continent,
         &id,
@@ -571,9 +566,8 @@ pub async fn create_country(
     req: HttpRequest,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let mut tx = begin_write(&pool).await?;
     let mut o = Obj::new(body)?;
     let id = o.required("id", slug);
@@ -610,9 +604,8 @@ pub async fn update_country(
     path: web::Path<String>,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let id = path.into_inner();
     if !is_slug(&id) {
         return Err(ApiError::not_found(Resource::Country, &id));
@@ -661,12 +654,10 @@ pub async fn delete_country(
     req: HttpRequest,
     path: web::Path<String>,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
     let id = path.into_inner();
     delete_resource(
         &req,
-        gate.get_ref(),
         &pool,
         Resource::Country,
         &id,

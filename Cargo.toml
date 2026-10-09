@@ -3,13 +3,23 @@ name = "paleo_api"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
+default-run = "paleo_api"
 
 [dependencies]
-actix-web = "4"
+actix-web = { version = "4", default-features = false, features = ["macros", "compress-brotli", "compress-gzip", "compress-zstd", "cookies", "unicode", "compat", "ws"] }
+argon2 = "0.6"
 bigdecimal = { version = "0.4", default-features = false, features = ["std"] }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "bigdecimal"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "time"] }
+
+# One Argon2 verification takes seconds unoptimized; keep debug test runs fast (003 research R8).
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

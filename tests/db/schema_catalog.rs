@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use sqlx::PgPool;
 
-use crate::support::{LINK_TABLES, RANKS, RESOURCE_TABLES, all_tables};
+use crate::support::{RANKS, RESOURCE_TABLES, all_tables};
 
 async fn names(pool: &PgPool, sql: &'static str) -> BTreeSet<String> {
     sqlx::query_scalar::<_, String>(sql)
@@ -23,7 +23,7 @@ fn assert_contains_all(kind: &str, actual: &BTreeSet<String>, expected: &[String
 }
 
 #[sqlx::test]
-async fn exactly_the_sixteen_tables_exist(pool: PgPool) {
+async fn exactly_the_seventeen_tables_exist(pool: PgPool) {
     let tables = names(
         &pool,
         "SELECT relname::text FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p')",
@@ -115,6 +115,17 @@ fn expected_constraints() -> Vec<String> {
             format!("{link}_{target}_fk"),
         ]);
     }
+    c.extend(
+        [
+            "accounts_pk",
+            "accounts_username_ck",
+            "accounts_password_hash_ck",
+            "accounts_role_ck",
+            "accounts_status_ck",
+            "accounts_credentials_version_ck",
+        ]
+        .map(String::from),
+    );
     c
 }
 
@@ -197,6 +208,7 @@ async fn every_trigger_and_function_exists(pool: PgPool) {
         "species_periods_min",
     ];
     expected.extend(rules.iter().map(|r| format!("{r}_trg")));
+    expected.push("accounts_credentials_changed_trg".into());
     assert_contains_all("triggers", &triggers, &expected);
 
     let functions = names(
@@ -212,6 +224,7 @@ async fn every_trigger_and_function_exists(pool: PgPool) {
             "paleo_forbid_id_change",
             "paleo_forbid_truncate",
             "paleo_require_safe_isolation",
+            "accounts_credentials_changed_fn",
         ]
         .map(String::from),
     );
@@ -284,10 +297,6 @@ async fn every_table_has_a_truncate_guard(pool: PgPool) {
             AND t.tgname = c.relname || '_no_truncate_trg'",
     )
     .await;
-    let expected: BTreeSet<String> = RESOURCE_TABLES
-        .iter()
-        .chain(LINK_TABLES.iter())
-        .map(|t| t.to_string())
-        .collect();
+    let expected: BTreeSet<String> = all_tables().iter().map(|t| t.to_string()).collect();
     assert_eq!(guarded, expected);
 }

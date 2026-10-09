@@ -12,6 +12,9 @@ use sqlx::{Connection, PgConnection};
 /// Bounded startup wait for the database (FR-003, research R5).
 pub const STARTUP_WAIT: Duration = Duration::from_secs(10);
 
+/// Time limit for one database operation of the API (Spec 003 FR-031, research R13).
+pub const DB_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Migrations embedded at build time. The API only compares against them;
 /// it never applies them (FR-004).
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -25,9 +28,44 @@ pub enum StartupError {
     Unreachable,
     AuthFailed,
     DatabaseMissing,
-    MigrationsPending { versions: Vec<i64> },
+    MigrationsPending {
+        versions: Vec<i64>,
+    },
     MigrationDirty(i64),
     MigrationModified(i64),
+    /// `JWT_SECRET` unset or empty (Spec 003 FR-014).
+    MissingSecret,
+    /// `JWT_SECRET` shorter than 32 bytes.
+    ShortSecret,
+    /// `JWT_SECRET` contains `change-me` in any case.
+    PlaceholderSecret,
+    /// A Spec 003 setting is out of range or unparsable.
+    InvalidSetting {
+        var: &'static str,
+        problem: SettingProblem,
+    },
+}
+
+/// What is wrong with a setting (Spec 003 plan §Startup contract).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingProblem {
+    /// Not an integer within `min..=max`.
+    Range { min: u64, max: u64 },
+    /// A `TRUSTED_PROXIES` entry that is not an IP address or CIDR range.
+    ProxyEntry(String),
+}
+
+impl StartupError {
+    /// The `reason` of the `startup_refused` event: only the FR-014 `JWT_SECRET` refusals
+    /// have one (contracts/security-events.md).
+    pub fn refusal_reason(&self) -> Option<&'static str> {
+        match self {
+            Self::MissingSecret => Some("jwt_secret_missing"),
+            Self::ShortSecret => Some("jwt_secret_short"),
+            Self::PlaceholderSecret => Some("jwt_secret_placeholder"),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for StartupError {
@@ -72,15 +110,41 @@ impl fmt::Display for StartupError {
                 "Migration {v} was modified after it was applied. \
                  Restore the original migration file or reset the database."
             ),
+            Self::MissingSecret => f.write_str(
+                "JWT_SECRET is not set. Set it to a random value of at least 32 bytes \
+                 (openssl rand -base64 48).",
+            ),
+            Self::ShortSecret => f.write_str(
+                "JWT_SECRET is shorter than 32 bytes. Use a random value (openssl rand -base64 48).",
+            ),
+            Self::PlaceholderSecret => f.write_str(
+                "JWT_SECRET is still the placeholder from .env.example. \
+                 Replace it with a random value (openssl rand -base64 48).",
+            ),
+            Self::InvalidSetting {
+                var,
+                problem: SettingProblem::Range { min, max },
+            } => write!(f, "{var} must be an integer from {min} to {max}."),
+            Self::InvalidSetting {
+                var,
+                problem: SettingProblem::ProxyEntry(entry),
+            } => write!(
+                f,
+                "{var} entry '{entry}' is not an IP address or CIDR range."
+            ),
         }
     }
 }
 
 impl std::error::Error for StartupError {}
 
-/// Connection options for the API pool: custom plans for every execution (research R3).
+/// Connection options for the API pool: custom plans for every execution (research R3) and
+/// a server-side limit of [`DB_TIMEOUT`] per statement, lock waits included (research R13).
 pub fn api_connect_options(opts: PgConnectOptions) -> PgConnectOptions {
-    opts.options([("plan_cache_mode", "force_custom_plan")])
+    opts.options([
+        ("plan_cache_mode", "force_custom_plan".to_string()),
+        ("statement_timeout", DB_TIMEOUT.as_millis().to_string()),
+    ])
 }
 
 /// Pause between connection attempts (research R5).

@@ -13,8 +13,15 @@ fn assert_cors(resp: &Resp) {
     let expose = resp
         .header("access-control-expose-headers")
         .unwrap_or_default();
-    assert!(
-        expose.to_ascii_lowercase().contains("etag"),
+    let mut exposed: Vec<String> = expose
+        .split(',')
+        .map(|h| h.trim().to_ascii_lowercase())
+        .collect();
+    exposed.sort();
+    // 003 research R4: scripts read the ETag, Retry-After, and rate-limit headers.
+    assert_eq!(
+        exposed,
+        ["etag", "ratelimit", "ratelimit-policy", "retry-after"],
         "Access-Control-Expose-Headers: {expose:?}"
     );
 }
@@ -51,10 +58,13 @@ async fn options_on_an_unknown_route_is_204(pool_opts: PgPoolOptions, opts: PgCo
         .await;
     assert_eq!(resp.status.as_u16(), 204, "{}", resp.text());
     assert_cors(&resp);
-    assert_eq!(resp.header("access-control-allow-methods"), Some("GET"));
+    assert_eq!(
+        resp.header("access-control-allow-methods"),
+        Some("GET, POST, PATCH, DELETE")
+    );
     assert_eq!(
         resp.header("access-control-allow-headers"),
-        Some("If-None-Match")
+        Some("Authorization, Content-Type, If-None-Match")
     );
     assert!(resp.body.is_empty());
 }
@@ -67,6 +77,19 @@ async fn api_pool_forces_custom_plans(pool_opts: PgPoolOptions, opts: PgConnectO
         .await
         .unwrap();
     assert_eq!(mode, "force_custom_plan");
+}
+
+#[sqlx::test]
+async fn api_pool_limits_each_statement_to_2_seconds(
+    pool_opts: PgPoolOptions,
+    opts: PgConnectOptions,
+) {
+    let app = app(pool_opts, opts).await;
+    let timeout: String = sqlx::query_scalar("SHOW statement_timeout")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(timeout, "2s");
 }
 
 // ---------------------------------------------------------------- reads
@@ -260,7 +283,16 @@ async fn cors_on_errors_and_preflight_on_known_routes(
             .await;
         assert_eq!(resp.status.as_u16(), 204, "{uri}");
         assert_cors(&resp);
-        assert_eq!(resp.header("access-control-allow-methods"), Some("GET"));
+        assert_eq!(
+            resp.header("access-control-allow-methods"),
+            Some("GET, POST, PATCH, DELETE")
+        );
+        assert_eq!(
+            resp.header("access-control-allow-headers"),
+            Some("Authorization, Content-Type, If-None-Match")
+        );
+        assert_eq!(resp.header("access-control-max-age"), Some("86400"));
+        assert_eq!(resp.header("access-control-allow-credentials"), None);
     }
 }
 
@@ -397,6 +429,12 @@ async fn options_on_write_routes_is_204(pool_opts: PgPoolOptions, opts: PgConnec
     }
 }
 
+/// `401` messages (003 FR-018, contracts/openapi.yaml `Unauthorized`).
+const MISSING_TOKEN: &str = "This operation needs an admin token. Log in at POST /api/v1/auth/login \
+                             and send the token as 'Authorization: Bearer <token>'.";
+const INVALID_TOKEN: &str =
+    "Your token is not valid. Log in again at POST /api/v1/auth/login to get a new one.";
+
 #[sqlx::test]
 async fn writes_need_admin_credentials(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
     let app = app(pool_opts, opts).await;
@@ -418,16 +456,20 @@ async fn writes_need_admin_credentials(pool_opts: PgPoolOptions, opts: PgConnect
         (Method::POST, "/api/v1/species", json!({})),
     ];
     for (method, uri, body) in cases {
-        for token in [None, Some("0f3c5d9e-random-token")] {
+        for (token, message) in [
+            (None, MISSING_TOKEN),
+            (Some("0f3c5d9e-random-token"), INVALID_TOKEN),
+        ] {
             let resp = send_as(&app, method.clone(), uri, body.clone(), token).await;
             assert_error(&resp, 401, "UNAUTHORIZED");
+            assert_eq!(resp.json()["error"]["message"], message, "{method} {uri}");
         }
         let resp = send_as(
             &app,
             method.clone(),
             uri,
             body.clone(),
-            Some(TEST_USER_TOKEN),
+            Some(&app.user_token()),
         )
         .await;
         assert_error(&resp, 403, "FORBIDDEN");
@@ -494,7 +536,7 @@ async fn body_problems_are_400_413_415(pool_opts: PgPoolOptions, opts: PgConnect
     let chunked = TestRequest::default()
         .method(Method::POST)
         .uri("/api/v1/eras")
-        .insert_header(("Authorization", format!("Bearer {TEST_ADMIN_TOKEN}")))
+        .insert_header(("Authorization", format!("Bearer {}", app.admin_token())))
         .insert_header(("Content-Type", "application/json"))
         .set_payload(big);
     let resp = app.call_chunked(chunked).await;
@@ -725,7 +767,7 @@ async fn check_order(pool_opts: PgPoolOptions, opts: PgConnectOptions) {
     let resp = app
         .call(
             unauthenticated(b"{".to_vec(), "application/json")
-                .insert_header(("Authorization", format!("Bearer {TEST_USER_TOKEN}"))),
+                .insert_header(("Authorization", format!("Bearer {}", app.user_token()))),
         )
         .await;
     assert_error(&resp, 403, "FORBIDDEN");
@@ -830,7 +872,7 @@ async fn error_bodies_leak_nothing(pool_opts: PgPoolOptions, opts: PgConnectOpti
             Method::POST,
             "/api/v1/eras",
             json!({}),
-            Some(TEST_USER_TOKEN),
+            Some(&app.user_token()),
         )
         .await,
         send_raw(

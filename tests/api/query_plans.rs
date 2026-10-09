@@ -42,9 +42,15 @@ const SELECTIVE: f64 = 1_000.0;
 /// A deep page, so `OFFSET` is part of the planned statement.
 const PAGE: Page = Page { page: 3, limit: 20 };
 
+/// Loads the fixture without the API pool's per-statement time limit (003 R13).
 async fn load(pool: &PgPool) {
-    exec_script(pool, DATASET).await.expect("fixture must load");
-    exec(pool, "ANALYZE").await.unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    exec(&mut *conn, "SET statement_timeout = 0").await.unwrap();
+    exec_script(&mut *conn, DATASET)
+        .await
+        .expect("fixture must load");
+    exec(&mut *conn, "ANALYZE").await.unwrap();
+    exec(&mut *conn, "RESET statement_timeout").await.unwrap();
 }
 
 /// Collects failures so one run reports every non-index-served shape.

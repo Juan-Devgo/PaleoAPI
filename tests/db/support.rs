@@ -31,11 +31,15 @@ pub const LINK_TABLES: [&str; 4] = [
     "species_countries",
 ];
 
-/// Every table of the schema (resource and link).
+/// The account table (003 data-model §1).
+pub const ACCOUNT_TABLES: [&str; 1] = ["accounts"];
+
+/// Every table of the schema (resource, link, and account).
 pub fn all_tables() -> Vec<&'static str> {
     RESOURCE_TABLES
         .iter()
         .chain(LINK_TABLES.iter())
+        .chain(ACCOUNT_TABLES.iter())
         .copied()
         .collect()
 }

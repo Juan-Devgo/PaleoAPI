@@ -67,6 +67,8 @@ These apply to every endpoint in this spec.
 
 ### 4.4 Write access
 
+> Replaced by [Spec 003](../003-security/spec.md#write-authorization) FR-015/FR-016.
+
 - `POST`, `PATCH`, and `DELETE` require an admin. Missing or invalid credentials return `401`. Valid credentials without the admin role return `403`.
 - Write endpoints are **deny-by-default**: every write passes through an admin check before any other processing. How credentials are issued and verified is defined by the security spec (§9). Until that spec ships, the admin check rejects every request with `401`, in every deployment.
 - The only way to pass the admin check before the security spec ships is a test-only credential that exists solely inside the automated test harness. It is never available in a built or deployed API.
@@ -179,13 +181,20 @@ Data changes rarely, so reads may be served from HTTP caches, and clients can al
 | `403` | Write by a non-admin |
 | `404` | Resource or route not found |
 | `405` | Method not supported on the route |
+| `408` | See [Spec 003 §Error Codes](../003-security/spec.md#error-codes) |
 | `409` | Duplicate `id` or unique name; delete blocked by dependents |
 | `413` | Request body larger than 64 KB |
+| `414` | See [Spec 003 §Error Codes](../003-security/spec.md#error-codes) |
 | `415` | Write body is not `application/json` |
 | `422` | Well-formed body that breaks validation or domain rules |
+| `429` | See [Spec 003 §Error Codes](../003-security/spec.md#error-codes) |
+| `431` | See [Spec 003 §Error Codes](../003-security/spec.md#error-codes) |
 | `500` | Unexpected error (generic message only) |
+| `503` | See [Spec 003 §Error Codes](../003-security/spec.md#error-codes) |
 
 ### 4.12 Error codes
+
+> See also [Spec 003 §Error Codes](../003-security/spec.md#error-codes).
 
 | Code | Status |
 |---|---|
@@ -547,7 +556,7 @@ Each criterion is testable. `R` means any resource in §5.
 ## 9. Out of Scope / Dependencies
 
 - **Spec 001 — Database Foundation (prerequisite):** PostgreSQL for development and tests, migrations, the schema for the resources in §5, database-level integrity constraints, and indexes. It replaces the `src/db/shemas_definition.sql` draft.
-- **Security spec:** login, JWT issuance and verification, admin role, password hashing, rate limiting (`429`). It replaces the deny-all admin check in §4.4.
+- **[Spec 003 — Security](../003-security/spec.md):** login, JWT issuance and verification, admin role, password hashing, rate limiting (`429`). It replaces the deny-all admin check in §4.4.
 - Seed data and bulk import.
 - Image hosting (only `image_url` is stored).
 - Multi-value filters (`diet=a,b`), full-text search, and `?fields=` selection.

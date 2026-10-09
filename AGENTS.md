@@ -48,16 +48,19 @@ Do not add dependencies outside this table without justifying them in the plan.
 
 ```bash
 cargo install sqlx-cli --no-default-features --features postgres   # once: sqlx-cli 0.9
+cargo install cargo-audit --locked         # once: dependency vulnerability scanner
 cp .env.example .env                       # once: then replace every "change-me" placeholder
 set -a; . ./.env; set +a                   # export the variables (the API does not read .env)
 docker compose up -d --wait db             # start PostgreSQL and wait until it is ready
 sqlx migrate run                           # apply migrations (the API never applies them)
 cargo run                                  # run the API
+cargo run --bin paleo-accounts -- <command>   # accounts: create <username> [--admin], set-password|grant-admin|revoke-admin|disable|enable <username>, list (password on stdin)
 DATABASE_URL="$TEST_DATABASE_URL" cargo test   # unit + integration tests
 cargo fmt --check                          # formatting
 cargo clippy --all-targets -- -D warnings  # lints
 cargo sqlx prepare -- --all-targets        # after changing a query! macro: regenerate .sqlx/ (dev DATABASE_URL) and commit it
 cargo sqlx prepare --check -- --all-targets   # .sqlx/ matches every query! macro
+cargo audit                                # no known vulnerabilities in Cargo.lock
 ```
 
 Never run plain `cargo test` with the development `DATABASE_URL`: the test harness would write its bookkeeping schema into the development database (the run fails; cleanup in `docs/specs/001-database/quickstart.md` §5).
@@ -68,7 +71,7 @@ Never run plain `cargo test` with the development `DATABASE_URL`: the test harne
 
 - All endpoints live under `/api/v1`. Resources use plural nouns; nesting expresses hierarchy (`/api/v1/eras/{era_id}/periods`).
 - Breaking changes require a new version (`/api/v2`).
-- `GET` is public. `POST`, `PUT`/`PATCH`, `DELETE` require an admin JWT (`401` if missing/invalid, `403` if not admin).
+- `GET` is public. `POST`, `PUT`/`PATCH`, `DELETE` require an admin JWT (`401` if missing/invalid, `403` if not admin). Exception: `POST /api/v1/auth/login` is public (Spec 003).
 - Pagination: `?page=<n>&limit=<n>`, defaults `page=1`, `limit=20`, max `limit=100`. Filters and sorting via query params.
 - Response shapes:
 
@@ -85,7 +88,7 @@ Never run plain `cargo test` with the development `DATABASE_URL`: the test harne
 ```
 
 - Use correct status codes (`400`, `401`, `403`, `404`, `409`, `422`, `429`, `500`). Never leak stack traces, SQL, or internal details.
-- All SQL uses bound parameters. Never log or return passwords, hashes, or tokens.
+- All SQL uses bound parameters. Never log or return passwords, hashes, or tokens; the only response that carries a token is a successful login.
 
 ---
 
@@ -99,6 +102,7 @@ A change is done only when:
 4. New/changed endpoints are documented (OpenAPI spec kept in sync).
 5. New queries used by public endpoints are indexed and respect the performance targets.
 6. No secrets, credentials, or `.env` files are committed.
+7. `cargo audit` passes (no known vulnerabilities in dependencies).
 
 ---
 

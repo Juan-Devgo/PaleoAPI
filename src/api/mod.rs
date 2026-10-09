@@ -37,20 +37,25 @@ pub mod species;
 pub mod taxonomy;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use actix_web::body::MessageBody;
 use actix_web::dev::{Service, ServiceFactory, ServiceRequest, ServiceResponse};
 use actix_web::http::header::{self, HeaderValue};
 use actix_web::http::{Method, StatusCode};
-use actix_web::middleware::{DefaultHeaders, ErrorHandlerResponse, ErrorHandlers};
-use actix_web::{App, HttpRequest, HttpResponse, ResponseError, web};
+use actix_web::middleware::{ErrorHandlerResponse, ErrorHandlers, from_fn};
+use actix_web::{App, HttpRequest, HttpResponse, HttpServer, ResponseError, web};
 use sqlx::PgPool;
 
-use self::auth::AdminGate;
 use self::error::{ApiError, no_store_on_get_errors};
+use crate::security::Security;
+use crate::security::middleware::{
+    capacity, rate_limit, request_limits, require_admin, security_headers,
+};
 
 /// Every path under `/api/v1` and the methods it answers (OpenAPI drift test).
 pub const ROUTES: &[(&str, &[Method])] = &[
+    ("/auth/login", &[Method::POST]),
     ("/eras", &[Method::GET, Method::POST]),
     (
         "/eras/{era_id}",
@@ -144,6 +149,8 @@ pub const ROUTES: &[(&str, &[Method])] = &[
 fn routes(cfg: &mut web::ServiceConfig) {
     use self::{geography as geo, geologic_time as time};
 
+    cfg.service(web::resource("/auth/login").route(web::post().to(auth::login)));
+
     cfg.service(
         web::resource("/eras")
             .route(web::get().to(time::list_eras))
@@ -190,17 +197,13 @@ fn routes(cfg: &mut web::ServiceConfig) {
                     move |req: HttpRequest,
                           path: web::Path<String>,
                           payload: web::Payload,
-                          pool: web::Data<PgPool>,
-                          gate: web::Data<dyn AdminGate>| {
-                        taxonomy::update(rank, req, path, payload, pool, gate)
+                          pool: web::Data<PgPool>| {
+                        taxonomy::update(rank, req, path, payload, pool)
                     },
                 ))
                 .route(web::delete().to(
-                    move |req: HttpRequest,
-                          path: web::Path<String>,
-                          pool: web::Data<PgPool>,
-                          gate: web::Data<dyn AdminGate>| {
-                        taxonomy::delete(rank, req, path, pool, gate)
+                    move |req: HttpRequest, path: web::Path<String>, pool: web::Data<PgPool>| {
+                        taxonomy::delete(rank, req, path, pool)
                     },
                 )),
         );
@@ -219,9 +222,8 @@ fn routes(cfg: &mut web::ServiceConfig) {
                         move |req: HttpRequest,
                               path: web::Path<String>,
                               payload: web::Payload,
-                              pool: web::Data<PgPool>,
-                              gate: web::Data<dyn AdminGate>| {
-                            taxonomy::create_child(child, req, path, payload, pool, gate)
+                              pool: web::Data<PgPool>| {
+                            taxonomy::create_child(child, req, path, payload, pool)
                         },
                     )),
             );
@@ -267,11 +269,13 @@ fn routes(cfg: &mut web::ServiceConfig) {
     );
 }
 
-/// Builds the application: routes, CORS headers, `OPTIONS`, `404`/`405` envelopes
-/// (plan §Request pipeline).
+/// Builds the application: routes, security layers, `OPTIONS`, `404`/`405` envelopes
+/// (002 and 003 plan §Request pipeline). Layers, outermost first: `security_headers`,
+/// `request_limits`, `capacity`, `rate_limit`, `OPTIONS` short-circuit, `require_admin`,
+/// `ErrorHandlers`, router.
 pub fn app(
     pool: PgPool,
-    gate: Arc<dyn AdminGate>,
+    security: Arc<Security>,
 ) -> App<
     impl ServiceFactory<
         ServiceRequest,
@@ -283,10 +287,11 @@ pub fn app(
 > {
     App::new()
         .app_data(web::Data::new(pool))
-        .app_data(web::Data::from(gate))
+        .app_data(web::Data::from(security))
         .service(web::scope("/api/v1").configure(routes))
         .default_service(web::to(route_not_found))
         .wrap(ErrorHandlers::new().handler(StatusCode::METHOD_NOT_ALLOWED, method_not_allowed))
+        .wrap(from_fn(require_admin))
         .wrap_fn(|req, srv| {
             let call = if req.method() == Method::OPTIONS {
                 Err(req)
@@ -304,11 +309,32 @@ pub fn app(
                 }
             }
         })
-        .wrap(
-            DefaultHeaders::new()
-                .add((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-                .add((header::ACCESS_CONTROL_EXPOSE_HEADERS, "ETag")),
-        )
+        .wrap(from_fn(rate_limit))
+        .wrap(from_fn(capacity))
+        .wrap(from_fn(request_limits))
+        .wrap(from_fn(security_headers))
+}
+
+/// Time the client has to send complete request headers (FR-029, research R11).
+pub const CLIENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long an idle kept-alive connection stays open (FR-029, research R11).
+pub const KEEP_ALIVE: Duration = Duration::from_secs(15);
+/// Time a closing connection has to finish (research R11).
+pub const CLIENT_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// The server of [`app`] on `listener` with the connection timeouts of FR-029. `main`
+/// and the TCP tests both start it, so they run the same transport settings.
+pub fn serve(
+    listener: std::net::TcpListener,
+    pool: PgPool,
+    security: Arc<Security>,
+) -> std::io::Result<actix_web::dev::Server> {
+    Ok(HttpServer::new(move || app(pool.clone(), security.clone()))
+        .client_request_timeout(CLIENT_REQUEST_TIMEOUT)
+        .keep_alive(KEEP_ALIVE)
+        .client_disconnect_timeout(CLIENT_DISCONNECT_TIMEOUT)
+        .listen(listener)?
+        .run())
 }
 
 /// Runs a list: the count first, then the page unless it lies past the end
@@ -350,28 +376,27 @@ pub(crate) async fn begin_write(
         .await
 }
 
-/// Check-order steps 2–3 of a body write: admin gate, then the body (research R5).
+/// Check-order steps 2–3 of a body write: the admin identity set by `require_admin`
+/// (003 research R16), then the body (research R5).
 pub(crate) async fn write_body(
     req: &HttpRequest,
     payload: web::Payload,
-    gate: &dyn AdminGate,
 ) -> Result<serde_json::Value, ApiError> {
-    gate.check(req)?;
+    auth::admin(req)?;
     http::read_json(req, payload).await
 }
 
-/// `DELETE` of one resource: gate, path `404` under the row lock (Q-W2), dependents
+/// `DELETE` of one resource: admin identity, path `404` under the row lock (Q-W2), dependents
 /// `409` (Q-W10), delete, `204` (spec §4.10).
 pub(crate) async fn delete_resource(
     req: &HttpRequest,
-    gate: &dyn AdminGate,
     pool: &PgPool,
     res: error::Resource,
     id: &str,
     lock: impl AsyncFnOnce(&mut sqlx::PgConnection) -> sqlx::Result<bool>,
     delete: impl AsyncFnOnce(&mut sqlx::PgConnection) -> sqlx::Result<()>,
 ) -> Result<HttpResponse, ApiError> {
-    gate.check(req)?;
+    auth::admin(req)?;
     if !input::is_slug(id) {
         return Err(ApiError::not_found(res, id));
     }
@@ -397,11 +422,18 @@ pub(crate) async fn delete_resource(
     Ok(HttpResponse::NoContent().finish())
 }
 
-/// Every `OPTIONS` request is a successful preflight for public reads (research R6).
+/// Every `OPTIONS` request is a successful preflight for the API's methods and request
+/// headers (research R15); credentials are never allowed.
 fn preflight() -> HttpResponse {
     HttpResponse::NoContent()
-        .insert_header((header::ACCESS_CONTROL_ALLOW_METHODS, "GET"))
-        .insert_header((header::ACCESS_CONTROL_ALLOW_HEADERS, "If-None-Match"))
+        .insert_header((
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            "GET, POST, PATCH, DELETE",
+        ))
+        .insert_header((
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            "Authorization, Content-Type, If-None-Match",
+        ))
         .insert_header((header::ACCESS_CONTROL_MAX_AGE, "86400"))
         .finish()
 }

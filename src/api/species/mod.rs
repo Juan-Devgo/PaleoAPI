@@ -10,7 +10,6 @@ use sqlx::{PgConnection, PgPool};
 use self::card::{SpeciesRow, load_cards};
 use self::input::{Refs, check_refs, read_create, read_patch};
 use self::list::{DEFAULT_SORT, SORTS, SpeciesFilter, SpeciesQuery};
-use super::auth::AdminGate;
 use super::db_error::{Ctx, Op, map_write};
 use super::error::{ApiError, Resource};
 use super::http::{Many, One, cached_json, created, updated};
@@ -195,9 +194,8 @@ pub async fn create(
     req: HttpRequest,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let mut tx = begin_write(&pool).await?;
     let mut o = Obj::new(body)?;
     let draft = read_create(&mut o);
@@ -265,9 +263,8 @@ pub async fn update(
     path: web::Path<String>,
     payload: web::Payload,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
-    let body = write_body(&req, payload, gate.get_ref()).await?;
+    let body = write_body(&req, payload).await?;
     let id = path.into_inner();
     if !is_slug(&id) {
         return Err(ApiError::not_found(Resource::Species, &id));
@@ -355,12 +352,10 @@ pub async fn delete(
     req: HttpRequest,
     path: web::Path<String>,
     pool: web::Data<PgPool>,
-    gate: web::Data<dyn AdminGate>,
 ) -> Result<HttpResponse, ApiError> {
     let id = path.into_inner();
     delete_resource(
         &req,
-        gate.get_ref(),
         &pool,
         Resource::Species,
         &id,
