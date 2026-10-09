@@ -22,6 +22,13 @@ pub const API_PREFIX: &str = "/api/v1";
 /// The only non-safe route that needs no token (FR-015).
 pub const LOGIN_PATH: &str = "/api/v1/auth/login";
 
+/// Longest accepted request target, in bytes (FR-028).
+pub const MAX_URI_BYTES: usize = 2048;
+/// Largest accepted total of request header lines, in bytes (FR-028).
+pub const MAX_HEADER_BYTES: usize = 16_384;
+/// Bytes counted per header line besides name and value (`": "` and CRLF).
+const HEADER_LINE_OVERHEAD: usize = 4;
+
 /// Response headers readable by browser scripts (research R4).
 pub const EXPOSED_HEADERS: &str = "ETag, Retry-After, RateLimit, RateLimit-Policy";
 /// `RateLimit` (draft-ietf-httpapi-ratelimit-headers-11).
@@ -111,7 +118,8 @@ fn bearer(headers: &HeaderMap) -> Result<&str, TokenProblem> {
 
 /// Token → live account check (FR-013, FR-015, research R7): `401` for a missing or
 /// rejected token, an unknown or disabled account, or a changed credential version;
-/// `403` without the admin role.
+/// `403` without the admin role; `503` when the lookup fails or takes longer than
+/// [`DB_TIMEOUT`] (research R13, R14), so a write is never allowed unchecked.
 async fn authorize(req: &ServiceRequest) -> Result<AdminIdentity, ApiError> {
     let (Some(security), Some(pool)) = (
         req.app_data::<web::Data<Security>>(),
@@ -163,6 +171,55 @@ pub async fn security_headers(
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
     Ok(res.map_into_boxed_body())
+}
+
+/// The FR-028 error for a request line or header block over its limit, URI first.
+fn over_limits(req: &ServiceRequest) -> Option<ApiError> {
+    let uri = req.uri();
+    let target = uri
+        .path_and_query()
+        .map_or_else(|| uri.to_string().len(), |pq| pq.as_str().len());
+    if target > MAX_URI_BYTES {
+        return Some(ApiError::uri_too_long());
+    }
+    let headers: usize = req
+        .headers()
+        .iter()
+        .map(|(name, value)| name.as_str().len() + value.len() + HEADER_LINE_OVERHEAD)
+        .sum();
+    (headers > MAX_HEADER_BYTES).then(ApiError::headers_too_large)
+}
+
+/// Plan §Request pipeline 1: `414` for a request target over 2,048 bytes, then `431`
+/// for header lines totalling over 16 KB (FR-028, research R11); the handler never runs.
+pub async fn request_limits(
+    req: ServiceRequest,
+    next: Next<impl MessageBody + 'static>,
+) -> Result<ServiceResponse<BoxBody>, Error> {
+    if let Some(err) = over_limits(&req) {
+        return Ok(req.into_response(err.error_response()));
+    }
+    next.call(req)
+        .await
+        .map(ServiceResponse::map_into_boxed_body)
+}
+
+/// Plan §Request pipeline 2: takes one in-flight permit without waiting and holds it
+/// until the response is produced; none free → `503` with `Retry-After: 1`
+/// (FR-030, research R12).
+pub async fn capacity(
+    req: ServiceRequest,
+    next: Next<impl MessageBody + 'static>,
+) -> Result<ServiceResponse<BoxBody>, Error> {
+    let Some(security) = req.app_data::<web::Data<Security>>().cloned() else {
+        return Ok(req.into_response(ApiError::internal().error_response()));
+    };
+    let Some(_permit) = security.requests().try_acquire() else {
+        return Ok(req.into_response(ApiError::busy().error_response()));
+    };
+    next.call(req)
+        .await
+        .map(ServiceResponse::map_into_boxed_body)
 }
 
 /// Plan §Request pipeline 3: resolves the [`client_ip::ClientKey`] into the request extensions
@@ -277,6 +334,51 @@ mod tests {
             };
             assert_eq!(get(header::CACHE_CONTROL), Some(expected), "{method}");
         }
+    }
+
+    fn limits_of(uri: &str, headers: &[(&str, usize)]) -> Option<(u16, String)> {
+        let mut req = TestRequest::get().uri(uri);
+        for (name, len) in headers {
+            req = req.insert_header((*name, "a".repeat(*len)));
+        }
+        over_limits(&req.to_srv_request()).map(|e| (e.status().as_u16(), e.code().to_string()))
+    }
+
+    #[test]
+    fn request_targets_over_2048_bytes_are_414() {
+        let prefix = "/api/v1/eras?x=";
+        let at_limit = format!("{prefix}{}", "a".repeat(MAX_URI_BYTES - prefix.len()));
+        assert_eq!(limits_of(&at_limit, &[]), None);
+        assert_eq!(
+            limits_of(&format!("{at_limit}a"), &[]),
+            Some((414, "URI_TOO_LONG".into()))
+        );
+    }
+
+    #[test]
+    fn header_lines_over_16_kib_are_431() {
+        // One line counts name + value + 4.
+        let value = MAX_HEADER_BYTES - "x-pad".len() - HEADER_LINE_OVERHEAD;
+        assert_eq!(limits_of("/x", &[("x-pad", value)]), None);
+        assert_eq!(
+            limits_of("/x", &[("x-pad", value + 1)]),
+            Some((431, "REQUEST_HEADERS_TOO_LARGE".into()))
+        );
+        // The total over many lines counts.
+        let mut req = TestRequest::get().uri("/x");
+        for i in 0..17 {
+            req = req.append_header((format!("x-pad-{i:02}"), "a".repeat(1_000)));
+        }
+        assert_eq!(
+            over_limits(&req.to_srv_request()).map(|e| e.status().as_u16()),
+            Some(431)
+        );
+        // The URI is checked first.
+        let long = format!("/{}", "a".repeat(MAX_URI_BYTES));
+        assert_eq!(
+            limits_of(&long, &[("x-pad", MAX_HEADER_BYTES)]).map(|e| e.0),
+            Some(414)
+        );
     }
 
     fn auth(value: &[u8]) -> HeaderMap {
