@@ -1,6 +1,7 @@
 //! Write-body reader (research R5), cached `GET` responses (research R7), envelopes.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::time::Duration;
 
 use actix_web::http::header;
 use actix_web::{HttpRequest, HttpResponse, HttpResponseBuilder, ResponseError, web};
@@ -12,6 +13,9 @@ use super::params::Pagination;
 
 /// Largest accepted write body (spec §4.10).
 pub const MAX_BODY_BYTES: usize = 65_536;
+
+/// Time a client has to send the whole write body (FR-029, research R11).
+pub const BODY_DEADLINE: Duration = Duration::from_secs(30);
 
 /// `{ "data": … }`.
 #[derive(Debug, Serialize)]
@@ -50,7 +54,8 @@ pub fn if_none_match_matches(header: &str, etag: &str) -> bool {
         .any(|tag| !tag.is_empty() && opaque(tag) == opaque(etag))
 }
 
-/// Reads a write body: size `413`, content type `415`, JSON `400` (research R5).
+/// Reads a write body: size `413`, content type `415`, a body not complete within
+/// [`BODY_DEADLINE`] `408` (plan §Deviations D2), JSON `400` (research R5).
 pub async fn read_json(req: &HttpRequest, payload: web::Payload) -> Result<Value, ApiError> {
     let declared = req
         .headers()
@@ -67,13 +72,14 @@ pub async fn read_json(req: &HttpRequest, payload: web::Payload) -> Result<Value
     if !is_json_content_type(content_type) {
         return Err(ApiError::unsupported_media_type());
     }
-    let bytes = payload
-        .to_bytes_limited(MAX_BODY_BYTES)
-        .await
-        .map_err(|_| ApiError::payload_too_large())?
-        .map_err(|_| {
-            ApiError::invalid_json("The request body could not be read. Send it again.".into())
-        })?;
+    let bytes =
+        actix_web::rt::time::timeout(BODY_DEADLINE, payload.to_bytes_limited(MAX_BODY_BYTES))
+            .await
+            .map_err(|_| ApiError::request_timeout())?
+            .map_err(|_| ApiError::payload_too_large())?
+            .map_err(|_| {
+                ApiError::invalid_json("The request body could not be read. Send it again.".into())
+            })?;
     serde_json::from_slice(&bytes).map_err(|e| {
         ApiError::invalid_json(format!(
             "The request body is not valid JSON (line {}, column {}). \

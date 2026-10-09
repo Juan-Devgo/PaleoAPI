@@ -74,7 +74,7 @@
 - [x] T057 [US4] Add `REQUEST_TIMEOUT`, `URI_TOO_LONG`, `REQUEST_HEADERS_TOO_LARGE` (spec §Error Codes) in `src/api/error.rs`
 - [x] T058 [P] [US4] Add `statement_timeout` of `DB_TIMEOUT` to `api_connect_options` (research R13) in `src/db.rs`
 - [x] T059 [P] [US4] Map transient database errors to `503` (research R14) in `src/api/db_error.rs`
-- [ ] T060 [P] [US4] Add the 30 s body deadline → `408` (research R11; plan §Deviations D2) in `src/api/http.rs`
+- [x] T060 [P] [US4] Add the 30 s body deadline → `408` (research R11; plan §Deviations D2) in `src/api/http.rs`
 - [ ] T061 [US4] Implement `request_limits` and `capacity` (research R11, R12) in `src/security/middleware.rs`
 - [ ] T062 [US4] Run the `require_admin` account lookup under `DB_TIMEOUT` and apply the fail-closed statuses (research R13, R14) in `src/security/middleware.rs`
 - [ ] T063 [US4] Wire `request_limits` and `capacity` (plan §Request pipeline 1–2) in `src/api/mod.rs`
