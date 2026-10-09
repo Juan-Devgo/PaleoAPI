@@ -830,7 +830,7 @@ components:
           required: [domain, kingdom, phylum, class, order, family, genus]
           properties: { domain: { $ref: '#/components/schemas/Summary' }, kingdom: { $ref: '#/components/schemas/Summary' }, phylum: { $ref: '#/components/schemas/Summary' }, class: { $ref: '#/components/schemas/Summary' }, order: { $ref: '#/components/schemas/Summary' }, family: { $ref: '#/components/schemas/Summary' }, genus: { $ref: '#/components/schemas/Summary' } }
         periods: { type: array, description: Oldest first., items: { $ref: '#/components/schemas/SpeciesPeriod' } }
-        continents: { type: array, description: 'Prehistoric first, then by name.', items:{ $ref: '#/components/schemas/ContinentSummary' } }
+        continents: { type: array, description: 'Prehistoric first, then by name.', items: { $ref: '#/components/schemas/ContinentSummary' } }
         countries: { type: array, description: Sorted by name., items: { $ref: '#/components/schemas/Summary' } }
       example:
         id: tyrannosaurus-rex
