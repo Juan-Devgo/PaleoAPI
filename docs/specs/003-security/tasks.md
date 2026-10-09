@@ -108,7 +108,7 @@
 
 - [x] T080 [P] [US7] Write header and preflight tests (plan §Cases `security/headers.rs`) in `tests/api/security/headers.rs`
 - [x] T081 [P] [US7] Write route-inventory tests (plan §Cases `security/inventory.rs`) in `tests/api/security/inventory.rs`
-- [ ] T082 [P] [US7] Write the `image_url` no-fetch test (plan §Cases `security/ssrf.rs`) in `tests/api/security/ssrf.rs`
+- [x] T082 [P] [US7] Write the `image_url` no-fetch test (plan §Cases `security/ssrf.rs`) in `tests/api/security/ssrf.rs`
 - [ ] T083 [P] [US7] Write per-operation OpenAPI rules (plan §Existing tests `openapi.rs`) in `tests/api/openapi.rs`
 - [ ] T084 [P] [US7] Update preflight expectations (research R15) in `tests/api/global.rs`
 - [ ] T085 [US7] Add the FR-033 headers and `Server` removal to `security_headers` (research R15) in `src/security/middleware.rs`
