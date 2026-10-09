@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use super::client_ip::ClientKey;
-use crate::api::error::ApiError;
+use crate::api::error::{ApiError, Overload};
 
 /// Number of independently locked shards.
 pub const SHARDS: usize = 16;
@@ -166,7 +166,7 @@ impl Decision {
 impl From<LimitError> for ApiError {
     fn from(err: LimitError) -> Self {
         match err {
-            LimitError::Full => ApiError::busy(),
+            LimitError::Full => ApiError::busy(Overload::Limiter),
             LimitError::Poisoned => ApiError::internal(),
         }
     }

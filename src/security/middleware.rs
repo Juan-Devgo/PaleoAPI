@@ -13,10 +13,11 @@ use sqlx::PgPool;
 use super::Security;
 use super::accounts::{self, ACTIVE, ADMIN};
 use super::client_ip;
+use super::events::{Event, EventKind};
 use super::rate_limit::Decision;
 use super::token::{self, Rejection};
 use crate::api::ROUTES;
-use crate::api::error::{ApiError, TokenProblem};
+use crate::api::error::{ApiError, Overload, TokenProblem};
 use crate::db::DB_TIMEOUT;
 
 /// Prefix of every route in [`ROUTES`].
@@ -118,38 +119,79 @@ fn bearer(headers: &HeaderMap) -> Result<&str, TokenProblem> {
     Ok(token)
 }
 
+/// A refused write: the response and the security event it raises (FR-039), if any.
+struct Denied {
+    error: ApiError,
+    /// `auth_rejected` (with its reason) or `forbidden`.
+    event: Option<(EventKind, Option<&'static str>)>,
+    /// Set only when the token names an existing account (FR-040).
+    account: Option<String>,
+}
+
+impl From<ApiError> for Box<Denied> {
+    /// Failures of the check itself (`503`, `500`) raise no `401`/`403` event.
+    fn from(error: ApiError) -> Self {
+        Box::new(Denied {
+            error,
+            event: None,
+            account: None,
+        })
+    }
+}
+
+fn unauthorized(problem: TokenProblem, account: Option<String>) -> Box<Denied> {
+    let reason = match problem {
+        TokenProblem::Missing => "missing",
+        TokenProblem::Expired => "expired",
+        TokenProblem::Invalid => "invalid",
+    };
+    Box::new(Denied {
+        error: ApiError::unauthorized(problem),
+        event: Some((EventKind::AuthRejected, Some(reason))),
+        account,
+    })
+}
+
 /// Token → live account check (FR-013, FR-015, research R7): `401` for a missing or
 /// rejected token, an unknown or disabled account, or a changed credential version;
 /// `403` without the admin role; `503` when the lookup fails or takes longer than
 /// [`DB_TIMEOUT`] (research R13, R14), so a write is never allowed unchecked.
-async fn authorize(req: &ServiceRequest) -> Result<AdminIdentity, ApiError> {
+async fn authorize(req: &ServiceRequest) -> Result<AdminIdentity, Box<Denied>> {
     let (Some(security), Some(pool)) = (
         req.app_data::<web::Data<Security>>(),
         req.app_data::<web::Data<PgPool>>(),
     ) else {
-        return Err(ApiError::internal());
+        return Err(ApiError::internal().into());
     };
-    let token = bearer(req.headers()).map_err(ApiError::unauthorized)?;
+    let token = bearer(req.headers()).map_err(|p| unauthorized(p, None))?;
     let claims = token::verify(security.keys(), token).map_err(|r| {
-        ApiError::unauthorized(match r {
-            Rejection::Expired => TokenProblem::Expired,
-            Rejection::Invalid => TokenProblem::Invalid,
-        })
+        unauthorized(
+            match r {
+                Rejection::Expired => TokenProblem::Expired,
+                Rejection::Invalid => TokenProblem::Invalid,
+            },
+            None,
+        )
     })?;
     let account = timeout(
         DB_TIMEOUT,
         accounts::find_for_write_check(pool.get_ref(), &claims.sub),
     )
     .await
-    .map_err(|_| ApiError::unavailable())??;
+    .map_err(|_| ApiError::unavailable())?
+    .map_err(ApiError::from)?;
     let Some(account) = account else {
-        return Err(ApiError::unauthorized(TokenProblem::Invalid));
+        return Err(unauthorized(TokenProblem::Invalid, None));
     };
     if account.status != ACTIVE || account.credentials_version != claims.ver {
-        return Err(ApiError::unauthorized(TokenProblem::Invalid));
+        return Err(unauthorized(TokenProblem::Invalid, Some(claims.sub)));
     }
     if account.role.as_deref() != Some(ADMIN) {
-        return Err(ApiError::forbidden());
+        return Err(Box::new(Denied {
+            error: ApiError::forbidden(),
+            event: Some((EventKind::Forbidden, None)),
+            account: Some(claims.sub),
+        }));
     }
     Ok(AdminIdentity {
         username: claims.sub,
@@ -158,13 +200,20 @@ async fn authorize(req: &ServiceRequest) -> Result<AdminIdentity, ApiError> {
 
 /// Plan §Request pipeline 0, outermost: on every response the Spec 002 CORS headers, and
 /// `Cache-Control: no-store` on every response to a method other than `GET`, `HEAD`, and
-/// `OPTIONS` (login and writes, FR-035, research R15).
+/// `OPTIONS` (login and writes, FR-035, research R15). It also logs every `503` that
+/// carries an [`Overload`] reason, whichever layer or handler produced it (FR-039).
 pub async fn security_headers(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
     let safe = is_safe(req.method());
     let mut res = next.call(req).await?;
+    let overload = res.response().extensions().get::<Overload>().copied();
+    if let Some(reason) = overload
+        && let Some(security) = res.request().app_data::<web::Data<Security>>()
+    {
+        security.log_overloaded(res.request(), reason.as_str(), res.status().as_u16());
+    }
     let headers = res.headers_mut();
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -222,7 +271,7 @@ pub async fn capacity(
         return Ok(req.into_response(ApiError::internal().error_response()));
     };
     let Some(_permit) = security.requests().try_acquire() else {
-        return Ok(req.into_response(ApiError::busy().error_response()));
+        return Ok(req.into_response(ApiError::busy(Overload::Capacity).error_response()));
     };
     next.call(req)
         .await
@@ -250,7 +299,14 @@ pub async fn rate_limit(
         Err(err) => return Ok(req.into_response(ApiError::from(err).error_response())),
     };
     let mut res = match decision {
-        Decision::Reject { retry_after, .. } => {
+        Decision::Reject {
+            retry_after, log, ..
+        } => {
+            if log {
+                let mut event = security.request_event(EventKind::RateLimited, req.request(), 429);
+                event.reason = Some("general");
+                security.emit(&event);
+            }
             let limit = format!(
                 "Too many requests: the limit is {} requests per minute (bursts up to {}).",
                 limiter.per_minute(),
@@ -272,25 +328,73 @@ pub async fn rate_limit(
     Ok(res)
 }
 
+/// The last non-empty segment of `target` (a path or a `Location` value).
+fn last_segment(target: &str) -> &str {
+    target
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+}
+
+/// `admin_write` for a successful write by `account`: `resource` is the last segment of
+/// `Location` for a `201`, otherwise of the path (contracts/security-events.md).
+fn log_admin_write(security: &Security, res: &ServiceResponse<BoxBody>, path: &str, account: &str) {
+    let resource = res
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .filter(|_| res.status().as_u16() == 201)
+        .map_or_else(|| last_segment(path), last_segment);
+    let mut event: Event =
+        security.request_event(EventKind::AdminWrite, res.request(), res.status().as_u16());
+    event.account = Some(account.to_string());
+    event.path = Some(path.to_string());
+    event.resource = Some(resource.to_string());
+    security.emit(&event);
+}
+
 /// Plan §Request pipeline 4.2: requests that [`needs_admin`] are answered `401` / `403`
 /// unless the token and the live account allow the write; the others pass untouched and
-/// `Authorization` is never read for them (FR-017).
+/// `Authorization` is never read for them (FR-017). Refusals and successful writes are
+/// logged (FR-039).
 pub async fn require_admin(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
     let pattern = req.match_pattern();
-    if needs_admin(req.method(), req.path(), pattern.as_deref()) {
-        match authorize(&req).await {
-            Ok(identity) => {
-                req.extensions_mut().insert(identity);
-            }
-            Err(err) => return Ok(req.into_response(err.error_response())),
-        }
+    if !needs_admin(req.method(), req.path(), pattern.as_deref()) {
+        return next
+            .call(req)
+            .await
+            .map(ServiceResponse::map_into_boxed_body);
     }
-    next.call(req)
-        .await
-        .map(ServiceResponse::map_into_boxed_body)
+    let identity = match authorize(&req).await {
+        Ok(identity) => identity,
+        Err(denied) => {
+            if let (Some((kind, reason)), Some(security)) =
+                (denied.event, req.app_data::<web::Data<Security>>())
+            {
+                let status = denied.error.status().as_u16();
+                let mut event = security.request_event(kind, req.request(), status);
+                event.reason = reason;
+                event.account = denied.account;
+                security.emit(&event);
+            }
+            return Ok(req.into_response(denied.error.error_response()));
+        }
+    };
+    let account = identity.username.clone();
+    let path = req.path().to_string();
+    let security = req.app_data::<web::Data<Security>>().cloned();
+    req.extensions_mut().insert(identity);
+    let res = next.call(req).await?.map_into_boxed_body();
+    if res.status().is_success()
+        && let Some(security) = security
+    {
+        log_admin_write(&security, &res, &path, &account);
+    }
+    Ok(res)
 }
 
 #[cfg(test)]

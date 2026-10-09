@@ -3,7 +3,7 @@
 
 use std::io::Write;
 use std::sync::{Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -116,6 +116,41 @@ impl Event {
             event: self,
         })
         .expect("an event of strings and integers always serializes")
+    }
+}
+
+/// The `reason` values of `overloaded` (contracts/security-events.md).
+pub const OVERLOAD_REASONS: [&str; 4] = ["capacity", "hashing", "database", "limiter"];
+
+/// At most one `overloaded` line per reason per second (FR-039).
+#[derive(Debug, Default)]
+pub struct OverloadLog {
+    slots: Mutex<[Slot; 4]>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct Slot {
+    last: Option<Instant>,
+    /// `503`s of this reason since the last line, including the current one.
+    pending: u32,
+}
+
+impl OverloadLog {
+    /// Counts one `503` of `reason`. Returns the `count` of the line to write: the `503`s
+    /// of this reason since the previous line (at least 1), or `None` while the previous
+    /// line is under a second old (or for an unknown reason).
+    pub fn note(&self, reason: &str, now: Instant) -> Option<u32> {
+        let index = OVERLOAD_REASONS.iter().position(|r| *r == reason)?;
+        let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+        let slot = &mut slots[index];
+        slot.pending = slot.pending.saturating_add(1);
+        let due = slot
+            .last
+            .is_none_or(|at| now.saturating_duration_since(at) >= Duration::from_secs(1));
+        due.then(|| {
+            slot.last = Some(now);
+            std::mem::take(&mut slot.pending)
+        })
     }
 }
 
@@ -241,6 +276,20 @@ mod tests {
         assert_eq!(parsed["resource"], "x\n");
         assert_eq!(parsed["event"], "admin_write");
         assert_eq!(parsed.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn overloaded_lines_are_one_per_reason_per_second_with_a_count() {
+        let log = OverloadLog::default();
+        let t0 = Instant::now();
+        assert_eq!(log.note("capacity", t0), Some(1));
+        assert_eq!(log.note("capacity", t0 + Duration::from_millis(10)), None);
+        assert_eq!(log.note("capacity", t0 + Duration::from_millis(999)), None);
+        // Another reason has its own second.
+        assert_eq!(log.note("hashing", t0 + Duration::from_millis(5)), Some(1));
+        assert_eq!(log.note("capacity", t0 + Duration::from_secs(1)), Some(3));
+        assert_eq!(log.note("capacity", t0 + Duration::from_secs(5)), Some(1));
+        assert_eq!(log.note("unknown", t0), None);
     }
 
     #[test]

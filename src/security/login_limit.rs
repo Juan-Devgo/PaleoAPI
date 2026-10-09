@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use super::client_ip::ClientKey;
-use crate::api::error::ApiError;
+use crate::api::error::{ApiError, Overload};
 
 /// Why the limiter could not decide (research R14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,7 +262,7 @@ impl Drop for Reservation<'_> {
 impl From<LoginLimitError> for ApiError {
     fn from(err: LoginLimitError) -> Self {
         match err {
-            LoginLimitError::Full => ApiError::busy(),
+            LoginLimitError::Full => ApiError::busy(Overload::Limiter),
             LoginLimitError::Poisoned => ApiError::internal(),
         }
     }

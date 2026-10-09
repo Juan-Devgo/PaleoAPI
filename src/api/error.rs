@@ -134,6 +134,33 @@ pub struct ApiError {
     details: Vec<FieldError>,
     challenge: Option<&'static str>,
     retry_after: Option<u64>,
+    overload: Option<Overload>,
+}
+
+/// The cause of a `503`, as the security log reports it in `overloaded` (FR-039). Stored in
+/// the extensions of the response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overload {
+    /// No free in-flight request permit.
+    Capacity,
+    /// No free password verification permit.
+    Hashing,
+    /// The database is unreachable or too slow.
+    Database,
+    /// A limiter table is full of live keys.
+    Limiter,
+}
+
+impl Overload {
+    /// The `reason` of the event (contracts/security-events.md).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Capacity => "capacity",
+            Self::Hashing => "hashing",
+            Self::Database => "database",
+            Self::Limiter => "limiter",
+        }
+    }
 }
 
 /// Longest path id echoed in a message (plan §Write path).
@@ -148,6 +175,7 @@ impl ApiError {
             details: Vec::new(),
             challenge: None,
             retry_after: None,
+            overload: None,
         }
     }
 
@@ -227,10 +255,11 @@ impl ApiError {
         }
     }
 
-    /// `503` under load (capacity, hashing, limiter table), `Retry-After: 1` (research R14).
-    pub fn busy() -> Self {
+    /// `503` under load, `Retry-After: 1` (research R14): `Capacity`, `Hashing`, or `Limiter`.
+    pub fn busy(reason: Overload) -> Self {
         Self {
             retry_after: Some(1),
+            overload: Some(reason),
             ..Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "SERVICE_UNAVAILABLE",
@@ -243,6 +272,7 @@ impl ApiError {
     pub fn unavailable() -> Self {
         Self {
             retry_after: Some(5),
+            overload: Some(Overload::Database),
             ..Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "SERVICE_UNAVAILABLE",
@@ -444,7 +474,11 @@ impl ResponseError for ApiError {
         if let Some(secs) = self.retry_after {
             res.insert_header((header::RETRY_AFTER, secs));
         }
-        res.body(self.body())
+        let mut res = res.body(self.body());
+        if let Some(reason) = self.overload {
+            res.extensions_mut().insert(reason);
+        }
+        res
     }
 }
 
@@ -520,13 +554,18 @@ mod tests {
 
     #[test]
     fn service_unavailable_carries_retry_after() {
-        for (e, secs) in [(ApiError::busy(), "1"), (ApiError::unavailable(), "5")] {
+        for (e, secs, reason) in [
+            (ApiError::busy(Overload::Capacity), "1", Overload::Capacity),
+            (ApiError::busy(Overload::Hashing), "1", Overload::Hashing),
+            (ApiError::unavailable(), "5", Overload::Database),
+        ] {
             assert_eq!(e.status(), StatusCode::SERVICE_UNAVAILABLE);
             assert_eq!(e.code(), "SERVICE_UNAVAILABLE");
             assert!(e.message().contains(&format!("Retry in {secs} second")));
             let res = e.error_response();
             assert_eq!(header(&res, header::RETRY_AFTER), Some(secs));
             assert_eq!(header(&res, header::WWW_AUTHENTICATE), None);
+            assert_eq!(res.extensions().get::<Overload>(), Some(&reason));
             let v: serde_json::Value = serde_json::from_slice(&e.body()).unwrap();
             assert_eq!(v["error"]["code"], "SERVICE_UNAVAILABLE");
         }

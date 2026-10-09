@@ -16,9 +16,12 @@ pub mod token;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
+use actix_web::{HttpMessage, HttpRequest};
+
 use crate::config::SecurityConfig;
+use client_ip::ClientKey;
 use clock::{Clock, SystemClock};
-use events::{Event, EventSink, StdoutSink};
+use events::{Event, EventKind, EventSink, OverloadLog, StdoutSink};
 use login_limit::LoginLimiter;
 use permits::Permits;
 use rate_limit::RateLimiter;
@@ -53,6 +56,7 @@ pub struct Security {
     login: LoginLimiter,
     clock: Arc<dyn Clock>,
     sink: Arc<dyn EventSink>,
+    overloads: OverloadLog,
     dummy_hash: String,
 }
 
@@ -95,6 +99,7 @@ impl Security {
             capacities,
             clock,
             sink,
+            overloads: OverloadLog::default(),
         }
     }
 
@@ -143,6 +148,45 @@ impl Security {
     /// Writes one event line to the sink.
     pub fn emit(&self, event: &Event) {
         self.sink.write_line(&event.to_line(SystemTime::now()));
+    }
+
+    /// The client of `req`: the key `rate_limit` stored, else resolved here (a request
+    /// refused before that layer).
+    pub fn client_of(&self, req: &HttpRequest) -> ClientKey {
+        req.extensions()
+            .get::<ClientKey>()
+            .copied()
+            .unwrap_or_else(|| {
+                client_ip::resolve(
+                    req.peer_addr().map(|addr| addr.ip()),
+                    req.headers(),
+                    &self.config.trusted_proxies,
+                )
+            })
+    }
+
+    /// A request event with `client`, `method`, `route` (the matched pattern, else
+    /// `unmatched`), and `status` set.
+    pub fn request_event(&self, kind: EventKind, req: &HttpRequest, status: u16) -> Event {
+        let mut event = Event::new(kind);
+        event.client = Some(self.client_of(req).to_string());
+        event.method = Some(req.method().as_str().to_string());
+        event.route = Some(
+            req.match_pattern()
+                .unwrap_or_else(|| "unmatched".to_string()),
+        );
+        event.status = Some(status);
+        event
+    }
+
+    /// Logs a `503` of `reason` unless that reason was logged within the last second.
+    pub fn log_overloaded(&self, req: &HttpRequest, reason: &'static str, status: u16) {
+        if let Some(count) = self.overloads.note(reason, self.now()) {
+            let mut event = self.request_event(EventKind::Overloaded, req, status);
+            event.reason = Some(reason);
+            event.count = Some(count);
+            self.emit(&event);
+        }
     }
 }
 

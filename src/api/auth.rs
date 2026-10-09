@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sqlx::PgPool;
 
-use super::error::{ApiError, TokenProblem};
+use super::error::{ApiError, Overload, TokenProblem};
 use super::http::{One, read_json};
 use super::input::{Obj, is_slug};
 use crate::db::DB_TIMEOUT;
@@ -134,7 +134,10 @@ pub async fn login(
     };
 
     // 5. Hashing permit: none → 503 and the reservation is released.
-    let _permit = security.hashes().try_acquire().ok_or_else(ApiError::busy)?;
+    let _permit = security
+        .hashes()
+        .try_acquire()
+        .ok_or_else(|| ApiError::busy(Overload::Hashing))?;
 
     // 6. Account lookup under the database timeout.
     let account = if is_slug(&username) {
