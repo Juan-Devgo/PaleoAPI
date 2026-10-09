@@ -311,6 +311,34 @@ impl ApiError {
         )
     }
 
+    /// `408`: the body did not arrive within the deadline (FR-029).
+    pub fn request_timeout() -> Self {
+        Self::new(
+            StatusCode::REQUEST_TIMEOUT,
+            "REQUEST_TIMEOUT",
+            "The request body did not arrive within 30 seconds. Send the whole body at once."
+                .into(),
+        )
+    }
+
+    /// `414`: the request target is longer than 2,048 bytes (FR-028).
+    pub fn uri_too_long() -> Self {
+        Self::new(
+            StatusCode::URI_TOO_LONG,
+            "URI_TOO_LONG",
+            "The URL is longer than 2,048 characters. Use shorter query values.".into(),
+        )
+    }
+
+    /// `431`: the request headers total more than 16 KB (FR-028).
+    pub fn headers_too_large() -> Self {
+        Self::new(
+            StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+            "REQUEST_HEADERS_TOO_LARGE",
+            "The request headers total more than 16 KB. Send fewer or smaller headers.".into(),
+        )
+    }
+
     pub fn unsupported_media_type() -> Self {
         Self::new(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -501,6 +529,27 @@ mod tests {
             assert_eq!(header(&res, header::WWW_AUTHENTICATE), None);
             let v: serde_json::Value = serde_json::from_slice(&e.body()).unwrap();
             assert_eq!(v["error"]["code"], "SERVICE_UNAVAILABLE");
+        }
+    }
+
+    #[test]
+    fn limit_errors_have_the_spec_codes() {
+        for (e, status, code) in [
+            (ApiError::request_timeout(), 408, "REQUEST_TIMEOUT"),
+            (ApiError::uri_too_long(), 414, "URI_TOO_LONG"),
+            (
+                ApiError::headers_too_large(),
+                431,
+                "REQUEST_HEADERS_TOO_LARGE",
+            ),
+        ] {
+            assert_eq!(e.status().as_u16(), status);
+            assert_eq!(e.code(), code);
+            assert!(!e.message().is_empty());
+            let res = e.error_response();
+            assert_eq!(header(&res, header::RETRY_AFTER), None);
+            let v: serde_json::Value = serde_json::from_slice(&e.body()).unwrap();
+            assert_eq!(v["error"]["code"], code);
         }
     }
 }

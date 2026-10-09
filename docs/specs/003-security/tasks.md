@@ -71,7 +71,7 @@
 - [x] T054 [P] [US4] Write proxy and /64 tests (plan §Cases `security/client_ip.rs`) in `tests/api/security/client_ip.rs`
 - [x] T055 [P] [US4] Write TCP limit tests for AC 16, 17, 30 and the FR-029 idle keep-alive close (plan §Cases `security/limits.rs`) in `tests/api/security/limits.rs`
 - [x] T056 [P] [US4] Write fail-closed tests (plan §Cases `security/fail_closed.rs`) in `tests/api/security/fail_closed.rs`
-- [ ] T057 [US4] Add `REQUEST_TIMEOUT`, `URI_TOO_LONG`, `REQUEST_HEADERS_TOO_LARGE` (spec §Error Codes) in `src/api/error.rs`
+- [x] T057 [US4] Add `REQUEST_TIMEOUT`, `URI_TOO_LONG`, `REQUEST_HEADERS_TOO_LARGE` (spec §Error Codes) in `src/api/error.rs`
 - [ ] T058 [P] [US4] Add `statement_timeout` of `DB_TIMEOUT` to `api_connect_options` (research R13) in `src/db.rs`
 - [ ] T059 [P] [US4] Map transient database errors to `503` (research R14) in `src/api/db_error.rs`
 - [ ] T060 [P] [US4] Add the 30 s body deadline → `408` (research R11; plan §Deviations D2) in `src/api/http.rs`
