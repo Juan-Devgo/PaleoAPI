@@ -58,10 +58,13 @@ async fn options_on_an_unknown_route_is_204(pool_opts: PgPoolOptions, opts: PgCo
         .await;
     assert_eq!(resp.status.as_u16(), 204, "{}", resp.text());
     assert_cors(&resp);
-    assert_eq!(resp.header("access-control-allow-methods"), Some("GET"));
+    assert_eq!(
+        resp.header("access-control-allow-methods"),
+        Some("GET, POST, PATCH, DELETE")
+    );
     assert_eq!(
         resp.header("access-control-allow-headers"),
-        Some("If-None-Match")
+        Some("Authorization, Content-Type, If-None-Match")
     );
     assert!(resp.body.is_empty());
 }
@@ -280,7 +283,16 @@ async fn cors_on_errors_and_preflight_on_known_routes(
             .await;
         assert_eq!(resp.status.as_u16(), 204, "{uri}");
         assert_cors(&resp);
-        assert_eq!(resp.header("access-control-allow-methods"), Some("GET"));
+        assert_eq!(
+            resp.header("access-control-allow-methods"),
+            Some("GET, POST, PATCH, DELETE")
+        );
+        assert_eq!(
+            resp.header("access-control-allow-headers"),
+            Some("Authorization, Content-Type, If-None-Match")
+        );
+        assert_eq!(resp.header("access-control-max-age"), Some("86400"));
+        assert_eq!(resp.header("access-control-allow-credentials"), None);
     }
 }
 
