@@ -15,6 +15,7 @@ use crate::db::DB_TIMEOUT;
 use crate::security::Security;
 use crate::security::accounts::{self, ACTIVE};
 use crate::security::client_ip::ClientKey;
+use crate::security::events::{Event, EventKind};
 use crate::security::login_limit::{Admission, LoginLimiter, Reserve};
 use crate::security::middleware::AdminIdentity;
 use crate::security::password::{self, MAX_CHARS};
@@ -98,6 +99,23 @@ fn username_limited(limiter: &LoginLimiter, retry_after: u64) -> ApiError {
     ApiError::rate_limited(&limit, retry_after)
 }
 
+/// Logs a login event (FR-039). `account` is set only for a username that names an
+/// existing account, so a password typed into the username field never reaches the log
+/// (FR-040).
+fn log_login(
+    security: &Security,
+    req: &HttpRequest,
+    kind: EventKind,
+    status: u16,
+    reason: Option<&'static str>,
+    account: Option<&str>,
+) {
+    let mut event: Event = security.request_event(kind, req, status);
+    event.reason = reason;
+    event.account = account.map(str::to_string);
+    security.emit(&event);
+}
+
 /// `POST /api/v1/auth/login` (plan §Login steps 1–8).
 ///
 /// Every failure is the same `401 INVALID_CREDENTIALS` after one Argon2 verification:
@@ -118,6 +136,16 @@ pub async fn login(
 
     // 1. Per-client log: full → 429, else record.
     if let Admission::Rejected(rejected) = limiter.admit_client(client, security.now())? {
+        if rejected.log {
+            log_login(
+                &security,
+                &req,
+                EventKind::RateLimited,
+                429,
+                Some("login_client"),
+                None,
+            );
+        }
         return Err(client_limited(limiter, rejected.retry_after));
     }
 
@@ -129,6 +157,16 @@ pub async fn login(
     let reservation = match limiter.reserve(client, &username, security.now())? {
         Reserve::Reserved(reservation) => reservation,
         Reserve::Rejected(rejected) => {
+            if rejected.log {
+                log_login(
+                    &security,
+                    &req,
+                    EventKind::RateLimited,
+                    429,
+                    Some("login_username"),
+                    None,
+                );
+            }
             return Err(username_limited(limiter, rejected.retry_after));
         }
     };
@@ -164,6 +202,14 @@ pub async fn login(
     match account {
         Some(account) if verified && account.status == ACTIVE => {
             drop(reservation);
+            log_login(
+                &security,
+                &req,
+                EventKind::LoginSucceeded,
+                200,
+                None,
+                Some(&username),
+            );
             let claims = Claims::now(&username, account.credentials_version);
             let access_token =
                 token::issue(security.keys(), &claims).map_err(|_| ApiError::internal())?;
@@ -175,8 +221,13 @@ pub async fn login(
                 },
             }))
         }
-        _ => {
-            reservation.fail(security.now());
+        account => {
+            let known = account.is_some().then_some(username.as_str());
+            let locked = reservation.fail(security.now());
+            log_login(&security, &req, EventKind::LoginFailed, 401, None, known);
+            if locked {
+                log_login(&security, &req, EventKind::LoginLocked, 401, None, known);
+            }
             Err(ApiError::invalid_credentials())
         }
     }
