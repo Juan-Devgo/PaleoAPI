@@ -84,7 +84,7 @@
 
 - [X] T065 [P] [US2] Write operator tool tests, including tool-created admin login for AC 1 (plan §Cases `security/accounts_cli.rs`) in `tests/api/security/accounts_cli.rs`
 - [X] T066 [P] [US2] Allow `tests/api/security/accounts_cli.rs` in `database_url_only_in_allowed_test_files` (plan §Existing tests) in `tests/repo_hygiene.rs`
-- [ ] T067 [US2] Implement the operator tool statements (data-model §1.1), then run `cargo sqlx prepare -- --all-targets`, in `src/security/accounts.rs`, `.sqlx/`
+- [X] T067 [US2] Implement the operator tool statements (data-model §1.1), then run `cargo sqlx prepare -- --all-targets`, in `src/security/accounts.rs`, `.sqlx/`
 - [ ] T068 [US2] Implement `paleo-accounts` (contracts/accounts-cli.md; research R9, R10) in `src/bin/paleo-accounts.rs`
 
 ## Phase 7: US5 — Login throttling without user enumeration (P2)
