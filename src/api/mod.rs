@@ -422,11 +422,18 @@ pub(crate) async fn delete_resource(
     Ok(HttpResponse::NoContent().finish())
 }
 
-/// Every `OPTIONS` request is a successful preflight for public reads (research R6).
+/// Every `OPTIONS` request is a successful preflight for the API's methods and request
+/// headers (research R15); credentials are never allowed.
 fn preflight() -> HttpResponse {
     HttpResponse::NoContent()
-        .insert_header((header::ACCESS_CONTROL_ALLOW_METHODS, "GET"))
-        .insert_header((header::ACCESS_CONTROL_ALLOW_HEADERS, "If-None-Match"))
+        .insert_header((
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            "GET, POST, PATCH, DELETE",
+        ))
+        .insert_header((
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            "Authorization, Content-Type, If-None-Match",
+        ))
         .insert_header((header::ACCESS_CONTROL_MAX_AGE, "86400"))
         .finish()
 }
