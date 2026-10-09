@@ -431,12 +431,13 @@ async fn twenty_failures_lock_a_username(pool_opts: PgPoolOptions, opts: PgConne
     let app = app_with(pool_opts, opts, login_limited()).await;
     let what = "Too many failed logins for this username";
     let mut locked = Vec::new();
-    for username in [ADMIN, "nobody"] {
+    for (i, username) in [ADMIN, "nobody"].into_iter().enumerate() {
         for n in 0..20 {
             let resp = login(&app, username, "paleo-test-password-2025", peer(100 + n)).await;
             assert_error(&resp, 401, "INVALID_CREDENTIALS");
         }
-        let resp = login(&app, username, TEST_PASSWORD, peer(200)).await;
+        // A fresh client each, so the general `RateLimit` values match as well.
+        let resp = login(&app, username, TEST_PASSWORD, peer(300 + i as u32)).await;
         assert_login_limited(&resp, what, 20, 900);
         locked.push((resp.status, header_list(&resp), resp.body.to_vec()));
     }

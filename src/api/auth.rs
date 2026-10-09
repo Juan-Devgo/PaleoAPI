@@ -1,6 +1,8 @@
 //! The admin identity of a write and the login endpoint (Spec 003 FR-007–FR-009,
 //! FR-015, plan §Login, research R16).
 
+use std::time::Duration;
+
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, web};
 use serde::Serialize;
 use serde_json::Value;
@@ -12,6 +14,8 @@ use super::input::{Obj, is_slug};
 use crate::db::DB_TIMEOUT;
 use crate::security::Security;
 use crate::security::accounts::{self, ACTIVE};
+use crate::security::client_ip::ClientKey;
+use crate::security::login_limit::{Admission, LoginLimiter, Reserve};
 use crate::security::middleware::AdminIdentity;
 use crate::security::password::{self, MAX_CHARS};
 use crate::security::token::{self, Claims, LIFETIME_SECS};
@@ -63,7 +67,38 @@ fn login_body(body: Value) -> Result<(String, String), ApiError> {
     }
 }
 
-/// `POST /api/v1/auth/login` (plan §Login steps 2, 3, 6–8).
+/// The window as the 429 messages state it: `15 minutes`, `1 second`, `90 seconds`.
+fn window_text(window: Duration) -> String {
+    let secs = window.as_secs();
+    let (n, unit) = if secs >= 60 && secs.is_multiple_of(60) {
+        (secs / 60, "minute")
+    } else {
+        (secs, "second")
+    };
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+}
+
+/// `429` of the per-client login log (plan §Login step 1).
+fn client_limited(limiter: &LoginLimiter, retry_after: u64) -> ApiError {
+    let limit = format!(
+        "Too many login attempts from your address: the limit is {} per {}.",
+        limiter.per_client(),
+        window_text(limiter.window())
+    );
+    ApiError::rate_limited(&limit, retry_after)
+}
+
+/// `429` of the per-username failure log (plan §Login step 4).
+fn username_limited(limiter: &LoginLimiter, retry_after: u64) -> ApiError {
+    let limit = format!(
+        "Too many failed logins for this username: the limit is {} per {}.",
+        limiter.per_username(),
+        window_text(limiter.window())
+    );
+    ApiError::rate_limited(&limit, retry_after)
+}
+
+/// `POST /api/v1/auth/login` (plan §Login steps 1–8).
 ///
 /// Every failure is the same `401 INVALID_CREDENTIALS` after one Argon2 verification:
 /// against the stored hash, or against the dummy hash for an unknown username. A username
@@ -74,9 +109,34 @@ pub async fn login(
     pool: web::Data<PgPool>,
     security: web::Data<Security>,
 ) -> Result<HttpResponse, ApiError> {
+    let limiter = security.login();
+    let client = req
+        .extensions()
+        .get::<ClientKey>()
+        .copied()
+        .unwrap_or(ClientKey::UNKNOWN);
+
+    // 1. Per-client log: full → 429, else record.
+    if let Admission::Rejected(rejected) = limiter.admit_client(client, security.now())? {
+        return Err(client_limited(limiter, rejected.retry_after));
+    }
+
+    // 2–3. Body and shape, before any hashing or database access.
     let body = read_json(&req, payload).await?;
     let (username, password) = login_body(body)?;
 
+    // 4. Per-username reservation. Dropped on every path except a failure.
+    let reservation = match limiter.reserve(client, &username, security.now())? {
+        Reserve::Reserved(reservation) => reservation,
+        Reserve::Rejected(rejected) => {
+            return Err(username_limited(limiter, rejected.retry_after));
+        }
+    };
+
+    // 5. Hashing permit: none → 503 and the reservation is released.
+    let _permit = security.hashes().try_acquire().ok_or_else(ApiError::busy)?;
+
+    // 6. Account lookup under the database timeout.
     let account = if is_slug(&username) {
         actix_web::rt::time::timeout(
             DB_TIMEOUT,
@@ -88,6 +148,7 @@ pub async fn login(
         None
     };
 
+    // 7. Verify against the stored hash, or the dummy hash for an unknown username.
     let hash = match &account {
         Some(account) => account.password_hash.clone(),
         None => security.dummy_hash().to_string(),
@@ -96,8 +157,10 @@ pub async fn login(
         .await
         .map_err(|_| ApiError::internal())?;
 
+    // 8. Success drops the reservation; a failure is recorded.
     match account {
         Some(account) if verified && account.status == ACTIVE => {
+            drop(reservation);
             let claims = Claims::now(&username, account.credentials_version);
             let access_token =
                 token::issue(security.keys(), &claims).map_err(|_| ApiError::internal())?;
@@ -109,7 +172,10 @@ pub async fn login(
                 },
             }))
         }
-        _ => Err(ApiError::invalid_credentials()),
+        _ => {
+            reservation.fail(security.now());
+            Err(ApiError::invalid_credentials())
+        }
     }
 }
 
@@ -133,6 +199,14 @@ mod tests {
         };
         req.extensions_mut().insert(identity.clone());
         assert_eq!(admin(&req).unwrap(), identity);
+    }
+
+    #[test]
+    fn window_text_reads_naturally() {
+        assert_eq!(window_text(Duration::from_secs(900)), "15 minutes");
+        assert_eq!(window_text(Duration::from_secs(60)), "1 minute");
+        assert_eq!(window_text(Duration::from_secs(90)), "90 seconds");
+        assert_eq!(window_text(Duration::from_secs(1)), "1 second");
     }
 
     fn fields(err: ApiError) -> Vec<String> {
